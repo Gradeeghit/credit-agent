@@ -34,6 +34,16 @@ public class BizException extends RuntimeException {
         return new BizException(code, 409, message);
     }
 
+    /** 文件体积超限(A2: 单文件 > 10MB), 返回 413。 */
+    public static BizException payloadTooLarge(String code, String message) {
+        return new BizException(code, 413, message);
+    }
+
+    /** 媒体类型不受支持(A2: 非 PDF 材料), 返回 415。 */
+    public static BizException unsupportedMediaType(String code, String message) {
+        return new BizException(code, 415, message);
+    }
+
     public String getCode() {
         return code;
     }

@@ -7,6 +7,9 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+
+import java.io.UncheckedIOException;
 
 /**
  * 全局异常处理。
@@ -34,5 +37,18 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException ex) {
         return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_PARAM", ex.getMessage()));
+    }
+
+    /** 上传体积超过容器上限: 与 A2 的 413 口径保持一致, 不让前端拿到 500。 */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUploadTooLarge(MaxUploadSizeExceededException ex) {
+        return ResponseEntity.status(413).body(ApiResponse.fail("FILE_TOO_LARGE", "单文件不得超过 10MB"));
+    }
+
+    /** 本地文件读写失败: 不向前端暴露路径细节。 */
+    @ExceptionHandler(UncheckedIOException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIo(UncheckedIOException ex) {
+        log.error("文件读写失败", ex);
+        return ResponseEntity.status(500).body(ApiResponse.fail("FILE_IO_ERROR", "文件读写失败, 请重试"));
     }
 }
