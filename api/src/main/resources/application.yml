@@ -1,0 +1,48 @@
+# 信贷申请智能审批助手 - 主配置
+# 由 application.properties 等价迁移, 键名与取值保持不变
+spring:
+  application:
+    name: credit-agent
+
+  # PostgreSQL 16 + pgvector
+  datasource:
+    url: '${DB_URL:jdbc:postgresql://localhost:5432/credit_agent}'
+    username: '${DB_USERNAME:postgres}'
+    password: '${DB_PASSWORD:postgres}'
+    driver-class-name: org.postgresql.Driver
+
+  # Spring AI (OpenAI 兼容接口: DeepSeek / 通义)
+  ai:
+    openai:
+      api-key: '${OPENAI_API_KEY:sk-xxx}'
+      base-url: '${OPENAI_BASE_URL:https://api.deepseek.com}'
+      chat:
+        options:
+          model: '${OPENAI_MODEL:deepseek-chat}'
+      embedding:
+        options:
+          model: '${EMBEDDING_MODEL:text-embedding-3-small}'
+
+server:
+  port: 8080
+
+# MyBatis-Plus
+mybatis-plus:
+  configuration:
+    # 下划线列名自动映射驼峰属性, 如 id_card_no -> idCardNo
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      # 主键策略为数据库自增(BIGSERIAL), 与 9 张表 DDL 一致
+      id-type: auto
+
+# 日志: MyBatis 打印 SQL 用的 logger 名是 Mapper 接口的全限定名
+# (如 com.credit.agent.infra.persistence.mapper.ProductMapper.insert),
+# 所以必须按 mapper 包开 debug; 配 org.apache.ibatis.mapping.SqlSource 是无效的(它只是个接口类)
+logging:
+  level:
+    com.credit.agent.infra.persistence.mapper: debug
+
+
+
