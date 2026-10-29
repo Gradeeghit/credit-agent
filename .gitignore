@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### 本地上传文件(政策文档/材料 PDF) ###
+uploads/
