@@ -135,3 +135,47 @@ Content-Type: application/pdf
     client.assert(response.body.data.chunkCount > 0, "chunkCount: " + response.body.data.chunkCount);
   });
 %}
+
+### ===============================================================
+### C2 向量检索
+### 前置: 已有文档完成切片且 embedding 非空(见第 5 段)
+### ===============================================================
+
+### 6) 全库检索: 命中项自带 [文档名 p.12-13] 引用
+POST http://localhost:8080/api/rag/search
+Content-Type: application/json
+
+{
+  "query": "逾期几次算不良",
+  "limit": 5
+}
+
+> {%
+  client.test("命中非空", () => {
+    client.assert(response.body.data.length > 0,
+      "命中数: " + response.body.data.length + ", 检查切片是否已向量化");
+  });
+  client.test("每条都带引用", () => {
+    response.body.data.forEach((hit, i) => {
+      client.assert(/^\[.+\]$/.test(hit.citation), "第 " + i + " 条引用格式异常: " + hit.citation);
+    });
+  });
+  client.test("相似度降序", () => {
+    const scores = response.body.data.map(h => h.score);
+    const sorted = [...scores].sort((a, b) => b - a);
+    client.assert(JSON.stringify(scores) === JSON.stringify(sorted), "分数未降序: " + scores);
+  });
+%}
+
+### 7) 限定单份文档检索(docId 必填时才加 doc_id 过滤)
+POST http://localhost:8080/api/rag/search
+Content-Type: application/json
+
+{
+  "query": "利率 加点",
+  "limit": 3,
+  "docId": 1
+}
+
+### 8) 重新向量化(补偿入口, 幂等: 只处理 embedding IS NULL 的当前切片)
+POST http://localhost:8080/api/documents/1/reindex

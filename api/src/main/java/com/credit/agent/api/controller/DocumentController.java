@@ -92,4 +92,10 @@ public class DocumentController {
         documentAppService.retire(id);
         return ApiResponse.ok(null);
     }
+
+    /** 重新向量化该文档下尚未向量化的切片(幂等, 用于失败补偿)。 */
+    @PostMapping("/{id}/reindex")
+    public ApiResponse<DocumentDto.ReindexResult> reindex(@PathVariable Long id) {
+        return ApiResponse.ok(documentAppService.reindex(id));
+    }
 }

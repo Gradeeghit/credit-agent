@@ -28,6 +28,17 @@ public final class DocumentDto {
     public record ParseStatusRequest(String parseStatus, String parseError) {
     }
 
+    /**
+     * 重新向量化结果(B5 补偿入口)。
+     *
+     * @param documentId 文档 ID
+     * @param attempted  待处理切片数
+     * @param updated    实际写入向量数
+     * @param reason     跳过或失败原因, 成功为 null
+     */
+    public record ReindexResult(Long documentId, int attempted, int updated, String reason) {
+    }
+
     /** 材料视图。 */
     public record View(
             Long id,

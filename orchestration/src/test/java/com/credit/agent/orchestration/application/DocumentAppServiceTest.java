@@ -6,12 +6,14 @@ import com.credit.agent.infra.persistence.service.DocumentService;
 import com.credit.agent.infra.persistence.service.LoanApplicationService;
 import com.credit.agent.orchestration.application.dto.DocumentDto;
 import com.credit.agent.orchestration.application.exception.BizException;
+import com.credit.agent.rag.embedding.DocumentChunkIndexer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -27,8 +29,9 @@ class DocumentAppServiceTest {
     private final DocumentService documentService = mock(DocumentService.class);
     private final LoanApplicationService applicationService = mock(LoanApplicationService.class);
     private final DocumentChunkService chunkService = mock(DocumentChunkService.class);
+    private final DocumentChunkIndexer chunkIndexer = mock(DocumentChunkIndexer.class);
     private final DocumentAppService service =
-            new DocumentAppService(documentService, applicationService, chunkService);
+            new DocumentAppService(documentService, applicationService, chunkService, chunkIndexer);
 
     @Test
     @DisplayName("重传: 新版本 version+1 且为当前有效, 旧版本与其切片同时失效")
@@ -90,6 +93,20 @@ class DocumentAppServiceTest {
 
         verify(documentService).updateById(any(Document.class));
         verify(chunkService).update(any());
+    }
+
+    @Test
+    @DisplayName("重新向量化: 校验文档存在后交给索引器, 幂等由索引器保证")
+    void reindexShouldDelegateToIndexer() {
+        when(documentService.getById(1L)).thenReturn(policyDoc(1L, 1));
+        when(chunkIndexer.index(1L)).thenReturn(new DocumentChunkIndexer.IndexOutcome(3, 3, null));
+
+        DocumentDto.ReindexResult result = service.reindex(1L);
+
+        assertEquals(3, result.attempted());
+        assertEquals(3, result.updated());
+        assertNull(result.reason());
+        verify(chunkIndexer).index(1L);
     }
 
     private static Document policyDoc(Long id, int version) {

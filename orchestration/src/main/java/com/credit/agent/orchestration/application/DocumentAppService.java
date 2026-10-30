@@ -10,6 +10,7 @@ import com.credit.agent.infra.persistence.service.LoanApplicationService;
 import com.credit.agent.orchestration.application.dto.DocumentDto;
 import com.credit.agent.orchestration.application.dto.PageResult;
 import com.credit.agent.orchestration.application.exception.BizException;
+import com.credit.agent.rag.embedding.DocumentChunkIndexer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,12 +36,14 @@ public class DocumentAppService {
     private final DocumentService documentService;
     private final LoanApplicationService applicationService;
     private final DocumentChunkService chunkService;
+    private final DocumentChunkIndexer chunkIndexer;
 
     public DocumentAppService(DocumentService documentService, LoanApplicationService applicationService,
-                              DocumentChunkService chunkService) {
+                              DocumentChunkService chunkService, DocumentChunkIndexer chunkIndexer) {
         this.documentService = documentService;
         this.applicationService = applicationService;
         this.chunkService = chunkService;
+        this.chunkIndexer = chunkIndexer;
     }
 
     /** 分页查询材料, 可按申请单/类型/是否当前有效过滤。 */
@@ -157,6 +160,17 @@ public class DocumentAppService {
                 .eq("doc_id", docId)
                 .eq("is_current", true)
                 .set("is_current", false));
+    }
+
+    /**
+     * 重新向量化(B5 补偿入口)。
+     * 业务含义: 向量化失败或开关后开时, 不必重传整份文档;
+     * 索引器只捞 embedding IS NULL 的当前切片, 因此反复调用是幂等的。
+     */
+    public DocumentDto.ReindexResult reindex(Long id) {
+        require(id);
+        DocumentChunkIndexer.IndexOutcome outcome = chunkIndexer.index(id);
+        return new DocumentDto.ReindexResult(id, outcome.attempted(), outcome.updated(), outcome.reason());
     }
 
     private void validateType(String docType, Long applicationId) {
