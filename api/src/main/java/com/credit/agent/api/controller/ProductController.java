@@ -4,6 +4,8 @@ import com.credit.agent.api.web.ApiResponse;
 import com.credit.agent.orchestration.application.ProductAppService;
 import com.credit.agent.orchestration.application.dto.PageResult;
 import com.credit.agent.orchestration.application.dto.ProductDto;
+import com.credit.agent.orchestration.application.security.CurrentUser;
+import com.credit.agent.orchestration.application.security.UserRole;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -43,21 +45,25 @@ public class ProductController {
         return ApiResponse.ok(productAppService.get(id));
     }
 
-    /** 新增产品。 */
+    /** 新增产品; 仅 APPROVER 可操作(J1), 其他角色 403。 */
     @PostMapping
-    public ApiResponse<ProductDto.View> create(@RequestBody ProductDto.SaveRequest req) {
+    public ApiResponse<ProductDto.View> create(CurrentUser user, @RequestBody ProductDto.SaveRequest req) {
+        user.requireAny(UserRole.APPROVER);
         return ApiResponse.ok(productAppService.create(req));
     }
 
-    /** 修改产品参数。 */
+    /** 修改产品参数; 仅 APPROVER 可操作(J1)。 */
     @PutMapping("/{id}")
-    public ApiResponse<ProductDto.View> update(@PathVariable Long id, @RequestBody ProductDto.SaveRequest req) {
+    public ApiResponse<ProductDto.View> update(CurrentUser user, @PathVariable Long id,
+                                               @RequestBody ProductDto.SaveRequest req) {
+        user.requireAny(UserRole.APPROVER);
         return ApiResponse.ok(productAppService.update(id, req));
     }
 
-    /** 删除产品; 已被申请单引用时返回 409。 */
+    /** 删除产品; 仅 APPROVER 可操作, 已被申请单引用时返回 409。 */
     @DeleteMapping("/{id}")
-    public ApiResponse<Void> delete(@PathVariable Long id) {
+    public ApiResponse<Void> delete(CurrentUser user, @PathVariable Long id) {
+        user.requireAny(UserRole.APPROVER);
         productAppService.delete(id);
         return ApiResponse.ok(null);
     }

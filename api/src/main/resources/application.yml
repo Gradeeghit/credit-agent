@@ -6,7 +6,7 @@ spring:
 
   # PostgreSQL 16 + pgvector
   datasource:
-    url: '${DB_URL:jdbc:postgresql://192.168.56.10:5432/123456}'
+    url: '${DB_URL:jdbc:postgresql://localhost:5432/credit_agent}'
     username: '${DB_USERNAME:postgres}'
     password: '${DB_PASSWORD:postgres}'
     driver-class-name: org.postgresql.Driver
@@ -35,6 +35,11 @@ server:
 # 上传落盘目录(政策文档/材料 PDF)
 credit-agent:
   upload-dir: '${UPLOAD_DIR:uploads}'
+  security:
+    # 开发阶段身份由前端直传 X-User-Id / X-User-Role, 尚未接入 Spring Security(I2/I3)
+    # true  = 缺少身份头直接 401(默认, 安全优先)
+    # false = 降级为匿名身份(无任何权限), 仅供本地联调临时使用
+    identity-required: ${IDENTITY_REQUIRED:true}
 
 # MyBatis-Plus
 mybatis-plus:

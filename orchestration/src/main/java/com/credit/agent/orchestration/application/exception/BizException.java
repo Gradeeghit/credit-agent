@@ -24,6 +24,16 @@ public class BizException extends RuntimeException {
         return new BizException(code, 400, message);
     }
 
+    /** 未提供身份(开发阶段缺 X-User-Id / X-User-Role), 返回 401。 */
+    public static BizException unauthorized(String code, String message) {
+        return new BizException(code, 401, message);
+    }
+
+    /** 身份已识别但角色无权执行(越权), 返回 403。 */
+    public static BizException forbidden(String code, String message) {
+        return new BizException(code, 403, message);
+    }
+
     /** 资源不存在, 返回 404。 */
     public static BizException notFound(String code, String message) {
         return new BizException(code, 404, message);

@@ -3,6 +3,8 @@ package com.credit.agent.orchestration.application;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.credit.agent.infra.persistence.entity.Document;
+import com.credit.agent.infra.persistence.entity.DocumentChunk;
+import com.credit.agent.infra.persistence.service.DocumentChunkService;
 import com.credit.agent.infra.persistence.service.DocumentService;
 import com.credit.agent.infra.persistence.service.LoanApplicationService;
 import com.credit.agent.orchestration.application.dto.DocumentDto;
@@ -32,10 +34,13 @@ public class DocumentAppService {
 
     private final DocumentService documentService;
     private final LoanApplicationService applicationService;
+    private final DocumentChunkService chunkService;
 
-    public DocumentAppService(DocumentService documentService, LoanApplicationService applicationService) {
+    public DocumentAppService(DocumentService documentService, LoanApplicationService applicationService,
+                              DocumentChunkService chunkService) {
         this.documentService = documentService;
         this.applicationService = applicationService;
+        this.chunkService = chunkService;
     }
 
     /** 分页查询材料, 可按申请单/类型/是否当前有效过滤。 */
@@ -83,7 +88,11 @@ public class DocumentAppService {
         return toView(require(entity.getId()));
     }
 
-    /** 重传材料: 新版本 version+1 置为有效并重置解析状态, 旧版本置为失效, 两步必须同事务。 */
+    /**
+     * 重传材料: 新版本 version+1 置为有效并重置解析状态, 旧版本置为失效;
+     * 同时把旧版本的切片全部置为失效, 否则检索与报告仍会引用已作废材料(A4)。
+     * 三步必须同事务, 任何一步失败都不能留下"两份都有效"的中间态。
+     */
     @Transactional
     public DocumentDto.View resubmit(Long id, DocumentDto.ResubmitRequest req) {
         Document old = require(id);
@@ -103,6 +112,7 @@ public class DocumentAppService {
         patch.setId(old.getId());
         patch.setIsCurrent(false);
         documentService.updateById(patch);
+        retireChunks(old.getId());
         return toView(require(fresh.getId()));
     }
 
@@ -124,13 +134,29 @@ public class DocumentAppService {
         return toView(require(id));
     }
 
-    /** 作废材料: 只置 isCurrent=false, 不物理删除, 保证历史报告引用可回链。 */
+    /** 作废材料: 置 isCurrent=false 并连带失效其切片, 不物理删除, 保证历史报告引用可回链。 */
+    @Transactional
     public void retire(Long id) {
-        require(id);
+        Document doc = require(id);
         Document patch = new Document();
         patch.setId(id);
         patch.setIsCurrent(false);
         documentService.updateById(patch);
+        retireChunks(doc.getId());
+    }
+
+    /**
+     * 让某个 document 版本下的全部切片失效。
+     * 业务含义: 切片带 doc_id 且每个版本是独立的 document 记录, 因此只影响被替换的那一版;
+     * 已失效的切片不再重复更新, 避免无意义写放大。
+     * 实现说明: 这里用显式列名的 UpdateWrapper 而非 lambda 版, 后者依赖 MyBatis-Plus 的
+     * TableInfo 缓存, 在无 Spring 容器的单测里会抛 "can not find lambda cache"。
+     */
+    private void retireChunks(Long docId) {
+        chunkService.update(Wrappers.<DocumentChunk>update()
+                .eq("doc_id", docId)
+                .eq("is_current", true)
+                .set("is_current", false));
     }
 
     private void validateType(String docType, Long applicationId) {
