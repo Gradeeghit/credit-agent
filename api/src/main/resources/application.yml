@@ -12,16 +12,16 @@ spring:
     driver-class-name: org.postgresql.Driver
 
   # Spring AI (OpenAI 兼容接口: DeepSeek / 通义)
+  # 注意1: embedding 不复用这组连接参数(不同 base_url / 不同 Key), 见下方 credit-agent.ai.embedding
+  # 注意2: base-url 绝对不能带 /v1。Spring AI 内部固定拼 /v1/chat/completions 与 /v1/embeddings,
+  #        写成 .../compatible-mode/v1 会变成 .../compatible-mode/v1/v1/... 直接 404
   ai:
     openai:
       api-key: '${OPENAI_API_KEY:sk-xxx}'
-      base-url: '${OPENAI_BASE_URL:https://api.deepseek.com}'
+      base-url: '${OPENAI_BASE_URL:https://ws-7ave3oec1mw2bccl.cn-beijing.maas.aliyuncs.com/compatible-mode}'
       chat:
         options:
           model: '${OPENAI_MODEL:deepseek-v4.1-flash-1017}'
-      embedding:
-        options:
-          model: '${EMBEDDING_MODEL:qwen3.7-text-embedding-flash}'
 
   # 政策文档上传(A2 口径: 单文件 10MB); 容器上限放大一档, 超限由业务校验返回结构化 413
   servlet:
@@ -30,7 +30,7 @@ spring:
       max-request-size: 24MB
 
 server:
-  port: 8080
+  port: 8081
 
 # 上传落盘目录(政策文档/材料 PDF)
 credit-agent:
@@ -40,6 +40,19 @@ credit-agent:
     # true  = 缺少身份头直接 401(默认, 安全优先)
     # false = 降级为匿名身份(无任何权限), 仅供本地联调临时使用
     identity-required: ${IDENTITY_REQUIRED:true}
+  ai:
+    # B5 向量化: 独立于 chat 的连接参数, 由 EmbeddingModelConfig 单独构造 Bean
+    embedding:
+      # 总开关: false 时切片只落库不向量化, 检索退化为纯 BM25
+      enabled: ${EMBEDDING_ENABLED:true}
+      api-key: '${OPENAI_API_KEY:sk-yyy}'
+      # 同样不能带 /v1; 带上了 EmbeddingModelConfig 会自动剥掉并打警告
+      base-url: '${EMBEDDING_BASE_URL:https://ws-7ave3oec1mw2bccl.cn-beijing.maas.aliyuncs.com/compatible-mode}'
+      model: '${EMBEDDING_MODEL:qwen3.7-text-embedding-flash}'
+      # 必须与 document_chunk.embedding 的 vector(1024) 一致, 写库前会断言
+      dimensions: ${EMBEDDING_DIMENSIONS:1024}
+      # 百炼单批上限 20 行, 超过会被服务端拒绝
+      batch-size: ${EMBEDDING_BATCH_SIZE:20}
 
 # MyBatis-Plus
 mybatis-plus:

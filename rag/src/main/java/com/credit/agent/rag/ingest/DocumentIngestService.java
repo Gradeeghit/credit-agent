@@ -5,6 +5,7 @@ import com.credit.agent.infra.persistence.entity.DocumentChunk;
 import com.credit.agent.infra.persistence.service.DocumentChunkService;
 import com.credit.agent.rag.chunk.Chunk;
 import com.credit.agent.rag.chunk.ChunkingStrategy;
+import com.credit.agent.rag.embedding.DocumentChunkIndexer;
 import com.credit.agent.rag.parse.ParsedPage;
 import com.credit.agent.rag.parse.PdfParseResult;
 import com.credit.agent.rag.parse.PdfPageTextExtractor;
@@ -24,12 +25,14 @@ public class DocumentIngestService {
     private final PdfPageTextExtractor extractor;
     private final ChunkingStrategy chunkingStrategy;
     private final DocumentChunkService chunkService;
+    private final DocumentChunkIndexer chunkIndexer;
 
     public DocumentIngestService(PdfPageTextExtractor extractor, ChunkingStrategy chunkingStrategy,
-                                 DocumentChunkService chunkService) {
+                                 DocumentChunkService chunkService, DocumentChunkIndexer chunkIndexer) {
         this.extractor = extractor;
         this.chunkingStrategy = chunkingStrategy;
         this.chunkService = chunkService;
+        this.chunkIndexer = chunkIndexer;
     }
 
     /**
@@ -56,6 +59,8 @@ public class DocumentIngestService {
             entities.add(toEntity(docId, docName, chunk));
         }
         chunkService.saveBatch(entities);
+        // B5: 切片落库后立刻向量化; 失败只降级为纯 BM25 检索, 不影响切片本身可用
+        chunkIndexer.index(docId);
         return new IngestResult(Document.PARSE_PARSED, entities.size(), null);
     }
 

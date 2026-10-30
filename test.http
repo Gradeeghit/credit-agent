@@ -1,0 +1,137 @@
+### 查询该 key 可用的模型清单（先跑这个，确认模型是否已开通）
+GET {{baseUrl}}/models
+Authorization: Bearer {{apiKey}}
+
+### 对话
+POST {{baseUrl}}/chat/completions
+Content-Type: application/json
+Authorization: Bearer {{apiKey}}
+
+{
+  "model": "{{chatModel}}",
+  "messages": [
+    { "role": "system", "content": "You are a helpful assistant." },
+    { "role": "user", "content": "你是谁？" }
+  ]
+}
+
+> {%
+  client.test("状态码 200", () => {
+    client.assert(response.status === 200, "实际状态码: " + response.status);
+  });
+%}
+
+### ===============================================================
+### 向量模型(embedding)测试
+### 说明: embedding 与 chat 不是同一组参数(PRD §1.5.1-D1)。
+###       若你的 embedding 走独立端点/Key, 把下面两处换成
+###       {{embeddingBaseUrl}} / {{embeddingApiKey}}, 并在
+###       http-client.private.env.json 里补这两个变量。
+### ===============================================================
+
+### 1) 确认模型已开通(能列出模型 = Key 与端点可用)
+GET {{baseUrl}}/models
+Authorization: Bearer {{apiKey}}
+
+### 2) 单条向量化 + 维度断言(核心用例: 维度必须是 1024)
+POST {{baseUrl}}/embeddings
+Content-Type: application/json
+Authorization: Bearer {{apiKey}}
+
+{
+  "model": "qwen3.7-text-embedding-flash",
+  "input": ["第一章 总则 贷款利率按 LPR 加点执行"],
+  "dimensions": 1024,
+  "encoding_format": "float"
+}
+
+> {%
+  client.test("状态码 200", () => {
+    client.assert(response.status === 200,
+      "实际: " + response.status + " body: " + JSON.stringify(response.body));
+  });
+  const vector = response.body.data[0].embedding;
+  client.test("维度 = 1024(与 vector(1024) 对齐)", () => {
+    client.assert(vector.length === 1024, "实际维度: " + vector.length);
+  });
+  client.test("不是全零向量", () => {
+    client.assert(vector.some(v => v !== 0), "全零说明没有真正计算");
+  });
+  client.test("有 token 消耗", () => {
+    client.assert(response.body.usage.total_tokens > 0,
+      "usage: " + JSON.stringify(response.body.usage));
+  });
+%}
+
+### 3) 批量向量化(百炼单批上限 20 行; 传 21 条应被拒绝)
+POST {{baseUrl}}/embeddings
+Content-Type: application/json
+Authorization: Bearer {{apiKey}}
+
+{
+  "model": "qwen3.7-text-embedding-flash",
+  "input": [
+    "第一章 总则",
+    "第二章 授信额度",
+    "第三章 利率与费用"
+  ],
+  "dimensions": 1024
+}
+
+> {%
+  client.test("三条输入返回三条向量", () => {
+    client.assert(response.body.data.length === 3, "实际: " + response.body.data.length);
+  });
+  client.test("每条都是 1024 维", () => {
+    response.body.data.forEach((item, i) => {
+      client.assert(item.embedding.length === 1024, "第 " + i + " 条维度: " + item.embedding.length);
+    });
+  });
+%}
+
+### 4) 对照: 不传 dimensions, 确认服务端默认维度是否也是 1024
+###    若第 2 步报 "unknown parameter: dimensions", 删掉该行, 以本用例结果为准
+POST {{baseUrl}}/embeddings
+Content-Type: application/json
+Authorization: Bearer {{apiKey}}
+
+{
+  "model": "qwen3.7-text-embedding-flash",
+  "input": ["维度对照测试"]
+}
+
+> {%
+  client.test("默认维度 = 1024", () => {
+    client.assert(response.body.data[0].embedding.length === 1024,
+      "实际默认维度: " + response.body.data[0].embedding.length);
+  });
+%}
+
+### ===============================================================
+### 5) 应用内验证: 走 B0 上传, 看切片是否被真正向量化
+###    前提: 启动应用时 EMBEDDING_ENABLED=true 且 EMBEDDING_API_KEY 有效
+###    上传成功后执行:
+###      SELECT doc_id, count(*) FILTER (WHERE embedding IS NOT NULL) AS indexed,
+###             count(*) AS total,
+###             min(vector_dims(embedding)) AS dim
+###      FROM document_chunk WHERE is_current = true GROUP BY doc_id ORDER BY doc_id DESC;
+###    期望: indexed = total 且 dim = 1024
+### ===============================================================
+
+### 5.1 上传政策文档(返回 chunkCount; embedding 为空说明向量化失败, 见应用日志)
+POST http://localhost:8080/api/documents/policy
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+
+--WebAppBoundary
+Content-Disposition: form-data; name="file"; filename="2024年报.pdf"
+Content-Type: application/pdf
+
+< ./2024年报.pdf
+--WebAppBoundary--
+
+> {%
+  client.test("切片入库成功", () => {
+    client.assert(response.status === 200, "实际: " + response.status);
+    client.assert(response.body.data.chunkCount > 0, "chunkCount: " + response.body.data.chunkCount);
+  });
+%}
