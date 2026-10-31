@@ -76,7 +76,7 @@ public class IncomeConsistencyDetector {
     }
 
     private static List<String> mergeCitations(DomainAnswer left, DomainAnswer right) {
-        return Stream.concat(left.citations().stream(), right.citations().stream())
+        return Stream.concat(left.citationTexts().stream(), right.citationTexts().stream())
                 .filter(Objects::nonNull)
                 .distinct()
                 .toList();

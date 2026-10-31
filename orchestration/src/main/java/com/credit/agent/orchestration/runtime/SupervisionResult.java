@@ -1,5 +1,7 @@
 package com.credit.agent.orchestration.runtime;
 
+import com.credit.agent.agent.domain.CitationRef;
+
 import java.util.List;
 
 /**
@@ -9,14 +11,14 @@ import java.util.List;
  *
  * @param conclusion           PASS_SUGGEST / REJECT_SUGGEST / NEED_MORE_INFO / CONFLICT
  * @param conflicts            跨域冲突清单, 直接进报告
- * @param citations            各域引用去重合并
+ * @param citations            各域结构化引用去重合并(G1: 每条必须带 chunkId 可回链)
  * @param requiresHumanReview  §3.2: 任何结论都必须人工签批
  * @param tokensUsed           各域 token 之和, 供 F2 预算与 H3 成本
  */
 public record SupervisionResult(
         String conclusion,
         List<DomainConflict> conflicts,
-        List<String> citations,
+        List<CitationRef> citations,
         boolean requiresHumanReview,
         long tokensUsed) {
 

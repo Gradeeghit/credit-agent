@@ -1,6 +1,7 @@
 package com.credit.agent.orchestration.runtime;
 
 import com.credit.agent.agent.domain.AgentRole;
+import com.credit.agent.agent.domain.CitationRef;
 import com.credit.agent.agent.domain.DomainAnswer;
 import com.credit.agent.agent.domain.DomainVerdict;
 import org.junit.jupiter.api.DisplayName;
@@ -23,8 +24,8 @@ class IncomeConsistencyDetectorTest {
     @DisplayName("F4 验收 case: 收入证明 3 万 / 流水月均 2 万 → 1 条 INCOME_INCONSISTENT 冲突")
     void incomeMismatchIsConflict() {
         List<DomainConflict> conflicts = detector.detect(List.of(
-                material("30000.00", "[收入证明.pdf p.2]"),
-                statement("20000.00", "[流水.pdf p.4-5]")));
+                material("30000.00", 1L, "收入证明.pdf"),
+                statement("20000.00", 2L, "流水.pdf")));
 
         assertEquals(1, conflicts.size());
         DomainConflict conflict = conflicts.get(0);
@@ -34,30 +35,30 @@ class IncomeConsistencyDetectorTest {
         // 偏差基数是收入证明: |30000-20000| / 30000 = 33.33%
         assertTrue(conflict.summary().contains("33.33%"));
         assertTrue(conflict.summary().contains("相对收入证明"));
-        assertEquals(List.of("[收入证明.pdf p.2]", "[流水.pdf p.4-5]"), conflict.citations());
+        assertEquals(List.of("[收入证明.pdf p.1]", "[流水.pdf p.1]"), conflict.citations());
     }
 
     @Test
     @DisplayName("偏差 5% 不判冲突; 恰好等于 30% 阈值也不判(阈值是闭区间)")
     void withinToleranceIsNotConflict() {
-        assertTrue(detector.detect(List.of(material("30000", "a"), statement("28500", "b"))).isEmpty());
-        assertTrue(detector.detect(List.of(material("30000", "a"), statement("21000", "b"))).isEmpty());
+        assertTrue(detector.detect(List.of(material("30000", 1L, "a"), statement("28500", 2L, "b"))).isEmpty());
+        assertTrue(detector.detect(List.of(material("30000", 1L, "a"), statement("21000", 2L, "b"))).isEmpty());
     }
 
     @Test
     @DisplayName("某一域没有该数值: 不判冲突(缺证据走需补材料, 不是矛盾)")
     void missingFactIsNotConflict() {
         DomainAnswer materialWithoutFact = new DomainAnswer(AgentRole.MATERIAL, "正常",
-                List.of(), 10, DomainVerdict.NORMAL, Map.of());
+                List.of(new CitationRef(1L, "a", 1, 1)), 10, DomainVerdict.NORMAL, Map.of());
 
-        assertTrue(detector.detect(List.of(materialWithoutFact, statement("20000", "b"))).isEmpty());
-        assertTrue(detector.detect(List.of(material("30000", "a"))).isEmpty());
+        assertTrue(detector.detect(List.of(materialWithoutFact, statement("20000", 2L, "b"))).isEmpty());
+        assertTrue(detector.detect(List.of(material("30000", 1L, "a"))).isEmpty());
     }
 
     @Test
     @DisplayName("收入为 0 或空列表: 不判冲突, 也不允许除零")
     void zeroIncomeIsSafe() {
-        assertTrue(detector.detect(List.of(material("0", "a"), statement("20000", "b"))).isEmpty());
+        assertTrue(detector.detect(List.of(material("0", 1L, "a"), statement("20000", 2L, "b"))).isEmpty());
         assertTrue(detector.detect(List.of()).isEmpty());
         assertTrue(detector.detect(null).isEmpty());
     }
@@ -67,16 +68,18 @@ class IncomeConsistencyDetectorTest {
     void toleranceIsConfigurable() {
         IncomeConsistencyDetector loose = new IncomeConsistencyDetector(new BigDecimal("0.60"));
 
-        assertTrue(loose.detect(List.of(material("30000", "a"), statement("20000", "b"))).isEmpty());
+        assertTrue(loose.detect(List.of(material("30000", 1L, "a"), statement("20000", 2L, "b"))).isEmpty());
     }
 
-    private static DomainAnswer material(String income, String citation) {
-        return new DomainAnswer(AgentRole.MATERIAL, "收入证明已核验", List.of(citation), 100,
+    private static DomainAnswer material(String income, long chunkId, String docName) {
+        return new DomainAnswer(AgentRole.MATERIAL, "收入证明已核验",
+                List.of(new CitationRef(chunkId, docName, 1, 1)), 100,
                 DomainVerdict.NORMAL, Map.of(DomainAnswer.FACT_INCOME_MONTHLY, new BigDecimal(income)));
     }
 
-    private static DomainAnswer statement(String monthlyAvg, String citation) {
-        return new DomainAnswer(AgentRole.STATEMENT, "流水已核验", List.of(citation), 50,
+    private static DomainAnswer statement(String monthlyAvg, long chunkId, String docName) {
+        return new DomainAnswer(AgentRole.STATEMENT, "流水已核验",
+                List.of(new CitationRef(chunkId, docName, 1, 1)), 50,
                 DomainVerdict.NORMAL,
                 Map.of(DomainAnswer.FACT_STATEMENT_MONTHLY_AVG, new BigDecimal(monthlyAvg)));
     }

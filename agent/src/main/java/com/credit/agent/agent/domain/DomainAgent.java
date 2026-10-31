@@ -3,9 +3,12 @@ package com.credit.agent.agent.domain;
 import com.credit.agent.agent.llm.LlmAnswer;
 import com.credit.agent.agent.llm.LlmGateway;
 import com.credit.agent.agent.llm.LlmRequest;
+import com.credit.agent.domain.loan.StatementMonthlyAverage;
 import com.credit.agent.rag.retrieval.Citation;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -37,7 +40,7 @@ public class DomainAgent {
         }
         LlmAnswer answer = gateway.ask(new LlmRequest(traceId, systemPrompt(brief.role()), userPrompt(brief)));
         return new DomainAnswer(brief.role(), answer.text(), citations(brief), answer.totalTokens(),
-                VerdictParser.parse(answer.text()), Map.of());
+                VerdictParser.parse(answer.text()), factsOf(brief, answer.text()));
     }
 
     /** 各域的角色约束: 只看本域、不许算钱、结论必须带引用。 */
@@ -48,7 +51,9 @@ public class DomainAgent {
             case CREDIT -> "你是信贷初审的征信分析 Agent。只依据【本域证据】识别逾期、频繁查询、负债偏高等风险信号。"
                     + "禁止引用收入证明、银行流水的内容; 禁止计算任何金额。";
             case STATEMENT -> "你是信贷初审的银行流水分析 Agent。只依据【本域证据】判断收支稳定性与异常大额往来。"
-                    + "禁止引用征信、制度条款的内容; 禁止计算任何金额, 金额对比由规则引擎负责。";
+                    + "禁止引用征信、制度条款的内容; 禁止计算任何金额, 金额对比由规则引擎负责。"
+                    + "回答末尾必须另起一行输出 JSON: {\"transactions\":[{\"date\":\"yyyy-MM-dd\",\"amount\":入账金额}]}, "
+                    + "只列入账(正数), 不列支出, 金额用两位小数数字。";
             case POLICY -> "你是信贷初审的制度检索 Agent。只依据【本域证据】中的制度条款作答, 每条结论必须带 [文件名 p.N] 引用。"
                     + "禁止引用客户材料内容; 禁止计算任何金额。";
             case SUPERVISOR -> "你是汇总 Agent, 只做跨域冲突识别与结论汇聚, 不单独取证、不做金额计算。";
@@ -68,12 +73,32 @@ public class DomainAgent {
                     .append("\n---\n");
         }
         sb.append("请按以下格式回答:\n1) 结论: 正常 / 异常 / 需补材料\n2) 依据: 每条都要带引用\n3) 待补清单: 没有就写无");
+        if (brief.role() == AgentRole.STATEMENT) {
+            sb.append("\n4) 明细 JSON: {\"transactions\":[{\"date\":\"yyyy-MM-dd\",\"amount\":入账金额}]}"
+                    + "(只列入账, 金额为两位小数数字, 不要写单位和千分位)");
+        }
         return sb.toString();
     }
 
-    private static List<String> citations(DomainBrief brief) {
+    /**
+     * 汇总本域数值事实。
+     * 业务含义: 库里带来的数值(如客户申报收入)原样保留; 流水月均由「模型抽取明细 + domain 算平均」得出,
+     * 模型给不出合法明细就只是缺这条事实, 不会污染其他数值, 也不会让冲突检测误判。
+     */
+    private static Map<String, BigDecimal> factsOf(DomainBrief brief, String answerText) {
+        Map<String, BigDecimal> facts = new LinkedHashMap<>(brief.facts());
+        if (brief.role() == AgentRole.STATEMENT) {
+            BigDecimal monthlyAvg = StatementMonthlyAverage.average(StatementExtractor.monthlyInflows(answerText));
+            if (monthlyAvg != null) {
+                facts.put(DomainAnswer.FACT_STATEMENT_MONTHLY_AVG, monthlyAvg);
+            }
+        }
+        return facts;
+    }
+
+    private static List<CitationRef> citations(DomainBrief brief) {
         return brief.evidence().stream()
-                .map(e -> Citation.render(e.docName(), e.pageStart(), e.pageEnd()))
+                .map(e -> new CitationRef(e.chunkId(), e.docName(), e.pageStart(), e.pageEnd()))
                 .distinct()
                 .toList();
     }

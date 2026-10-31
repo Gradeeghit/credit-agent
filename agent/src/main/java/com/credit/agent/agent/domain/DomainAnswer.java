@@ -8,11 +8,11 @@ import java.util.Map;
  * 子 Agent 的域内结论。
  * 业务含义: 每个域只回答"我这一域看到了什么、依据是什么", 不下"放不放贷"的结论;
  * verdict 是给 Supervisor 的结构化判据, facts 是本域陈述的**原始数值**(如收入证明月收入),
- * 供跨域一致性比对使用 —— 比对在编排层用确定性代码做, 不让模型自己判断谁对谁错。
+ * citations 是带 chunkId 的结构化引用, 保证报告里的每条引用都能回链原文。
  *
  * @param role       产出该结论的域
  * @param conclusion 域内结论文本(异常/正常/需补材料)
- * @param citations  本结论引用的 [文件名 p.N] 列表
+ * @param citations  结构化引用, 每条都能回链到 document_chunk
  * @param tokensUsed 本次调用消耗的 token
  * @param verdict    结论等级, 由文本折叠而来(F4 汇聚判据)
  * @param facts      本域陈述的数值事实, key 见 {@link #FACT_INCOME_MONTHLY} 等常量
@@ -20,7 +20,7 @@ import java.util.Map;
 public record DomainAnswer(
         AgentRole role,
         String conclusion,
-        List<String> citations,
+        List<CitationRef> citations,
         long tokensUsed,
         DomainVerdict verdict,
         Map<String, BigDecimal> facts) {
@@ -38,7 +38,7 @@ public record DomainAnswer(
     }
 
     /** 只有文本、没有数值事实时的便捷构造(结论等级从文本折叠)。 */
-    public DomainAnswer(AgentRole role, String conclusion, List<String> citations, long tokensUsed) {
+    public DomainAnswer(AgentRole role, String conclusion, List<CitationRef> citations, long tokensUsed) {
         this(role, conclusion, citations, tokensUsed, VerdictParser.parse(conclusion), Map.of());
     }
 
@@ -55,5 +55,10 @@ public record DomainAnswer(
     /** 本域是否要求补材料。 */
     public boolean needsMoreInfo() {
         return verdict == DomainVerdict.NEED_MORE_INFO;
+    }
+
+    /** 渲染后的引用文本, 供报告与日志展示; 落库请存 {@link #citations()}。 */
+    public List<String> citationTexts() {
+        return citations.stream().map(CitationRef::text).toList();
     }
 }

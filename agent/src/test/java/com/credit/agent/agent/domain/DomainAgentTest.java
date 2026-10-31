@@ -1,11 +1,14 @@
 package com.credit.agent.agent.domain;
 
+import com.credit.agent.agent.domain.CitationRef;
 import com.credit.agent.agent.llm.LlmAnswer;
 import com.credit.agent.agent.llm.LlmRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -62,15 +65,17 @@ class DomainAgentTest {
     }
 
     @Test
-    @DisplayName("制度域: 结论引用按 [文件名 p.起-止] 渲染并去重")
-    void policyCitationsRenderedAndDistinct() {
+    @DisplayName("制度域: 引用按 chunk 保留(同页两切片是两条), 展示文本去重")
+    void policyCitationsRenderedPerChunk() {
         DomainBrief brief = DomainBrief.forPolicy(List.of(
                 new DomainEvidence(4L, 14L, "2024年报.pdf", 12, 13, "逾期 3 次以上不予准入"),
                 new DomainEvidence(6L, 14L, "2024年报.pdf", 12, 13, "同一页的第二段")));
 
         DomainAnswer answer = agent.analyze("trace-1", brief);
 
-        assertEquals(List.of("[2024年报.pdf p.12-13]"), answer.citations());
+        // 回链凭据是 chunkId, 两个切片就必须是两条引用, 不能按展示文本合并
+        assertEquals(List.of(4L, 6L), answer.citations().stream().map(CitationRef::chunkId).toList());
+        assertEquals(List.of("[2024年报.pdf p.12-13]"), answer.citationTexts().stream().distinct().toList());
         assertTrue(captured.get().systemPrompt().contains("制度检索"));
     }
 
@@ -86,5 +91,34 @@ class DomainAgentTest {
     @DisplayName("brief 为空直接拒绝, 不发起模型调用")
     void nullBriefRejected() {
         assertThrows(IllegalArgumentException.class, () -> agent.analyze("trace-1", null));
+    }
+
+    @Test
+    @DisplayName("流水域: 模型只抽明细, 月均由 domain 算出来填进 facts")
+    void statementMonthlyAverageComesFromDomain() {
+        DomainAgent statementAgent = new DomainAgent(request -> {
+            captured.set(request);
+            return new LlmAnswer("1) 结论: 正常\n4) {\"transactions\":["
+                    + "{\"date\":\"2026-01-05\",\"amount\":20000.00},"
+                    + "{\"date\":\"2026-02-05\",\"amount\":22000.00}]}", 100, 20);
+        });
+        DomainBrief brief = DomainBrief.forStatement(9L,
+                List.of(new DomainEvidence(3L, 13L, "流水.pdf", 4, 5, "流水正文")));
+
+        DomainAnswer answer = statementAgent.analyze("trace-1", brief);
+
+        assertEquals(new BigDecimal("21000.00"), answer.fact(DomainAnswer.FACT_STATEMENT_MONTHLY_AVG));
+    }
+
+    @Test
+    @DisplayName("材料域: 库里带来的申报收入原样回到 facts, 模型改不了")
+    void materialKeepsInjectedIncome() {
+        DomainBrief brief = DomainBrief.forMaterial(9L,
+                List.of(new DomainEvidence(1L, 11L, "收入证明.pdf", 2, 2, "月收入 3 万元")),
+                Map.of(DomainAnswer.FACT_INCOME_MONTHLY, new BigDecimal("30000.00")));
+
+        DomainAnswer answer = agent.analyze("trace-1", brief);
+
+        assertEquals(new BigDecimal("30000.00"), answer.fact(DomainAnswer.FACT_INCOME_MONTHLY));
     }
 }

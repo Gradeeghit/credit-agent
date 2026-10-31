@@ -1,5 +1,6 @@
 package com.credit.agent.orchestration.runtime;
 
+import com.credit.agent.agent.domain.CitationRef;
 import com.credit.agent.agent.domain.DomainAnswer;
 import org.springframework.stereotype.Service;
 
@@ -34,7 +35,7 @@ public class SupervisorAgent {
                 : answers.stream().filter(Objects::nonNull).toList();
         List<DomainConflict> conflicts = conflictDetector.detect(safe);
         String conclusion = decide(safe, conflicts);
-        List<String> citations = safe.stream()
+        List<CitationRef> citations = safe.stream()
                 .flatMap(a -> a.citations().stream())
                 .filter(Objects::nonNull)
                 .distinct()
