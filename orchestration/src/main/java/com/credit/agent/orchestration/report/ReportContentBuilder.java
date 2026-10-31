@@ -1,10 +1,12 @@
 package com.credit.agent.orchestration.report;
 
 import com.credit.agent.orchestration.runtime.DomainConflict;
+import com.credit.agent.orchestration.runtime.FailureReason;
 import com.credit.agent.orchestration.runtime.SupervisionResult;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -32,11 +34,44 @@ public class ReportContentBuilder {
      */
     public ReportContent build(SupervisionResult supervision, RuleEngineResult ruleEngine,
                                List<String> pendingItems) {
+        return build(supervision, ruleEngine, pendingItems, null);
+    }
+
+    /**
+     * 组装报告内容(支持降级标记)。
+     * 业务含义: 编排被预算/步数掐断时仍要出报告, 但必须在风险点里显式写「AI 分析不可用」,
+     * 否则审批人会以为这是一份完整分析。
+     *
+     * @param failureReason 终止原因; 为 null 表示分析完整
+     */
+    public ReportContent build(SupervisionResult supervision, RuleEngineResult ruleEngine,
+                               List<String> pendingItems, FailureReason failureReason) {
+        return build(supervision, ruleEngine, pendingItems, failureReason,
+                supervision == null ? null : supervision.conclusion());
+    }
+
+    /**
+     * 组装报告内容(支持降级标记 + 降级前结论)。
+     * 业务含义: 降级会把结论覆盖成 NEED_MORE_INFO, 但**降级前若已发现域异常, 那条异常不能从风险点里消失**,
+     * 否则审批人只看到"AI 分析不可用", 不知道已经有域报过警。
+     *
+     * @param failureReason          终止原因; 为 null 表示分析完整
+     * @param conclusionBeforeDegrade 降级前的汇聚结论, 用于决定是否补 DOMAIN_ABNORMAL 风险
+     */
+    public ReportContent build(SupervisionResult supervision, RuleEngineResult ruleEngine,
+                               List<String> pendingItems, FailureReason failureReason,
+                               String conclusionBeforeDegrade) {
         if (supervision == null) {
             throw new IllegalArgumentException("汇聚结果不能为空");
         }
+        List<RiskItem> risks = new ArrayList<>(risksOf(supervision, conclusionBeforeDegrade));
+        if (failureReason != null) {
+            risks.add(new RiskItem(RiskItem.CODE_AI_DEGRADED,
+                    "AI 分析不可用(" + failureReason + "), 报告仅含已完成部分, 请人工补核",
+                    RiskItem.LEVEL_HIGH));
+        }
         return new ReportContent(supervision.conclusion(), supervision.citations(),
-                risksOf(supervision), ruleEngine, confidenceOf(supervision.conclusion()),
+                risks, ruleEngine, confidenceOf(supervision.conclusion()),
                 pendingOf(supervision, pendingItems));
     }
 
@@ -51,13 +86,16 @@ public class ReportContentBuilder {
         };
     }
 
-    private static List<RiskItem> risksOf(SupervisionResult supervision) {
+    /** 风险点来源: 冲突优先; 其次看"当前结论或降级前结论"是否为建议拒绝, 两者任一命中都要保留域异常风险。 */
+    private static List<RiskItem> risksOf(SupervisionResult supervision, String conclusionBeforeDegrade) {
         if (!supervision.conflicts().isEmpty()) {
             return supervision.conflicts().stream()
                     .map(c -> new RiskItem(c.code(), c.summary(), RiskItem.LEVEL_HIGH))
                     .toList();
         }
-        if (SupervisionResult.REJECT_SUGGEST.equals(supervision.conclusion())) {
+        boolean domainAbnormal = SupervisionResult.REJECT_SUGGEST.equals(supervision.conclusion())
+                || SupervisionResult.REJECT_SUGGEST.equals(conclusionBeforeDegrade);
+        if (domainAbnormal) {
             return List.of(new RiskItem(RiskItem.CODE_DOMAIN_ABNORMAL,
                     "子域发现异常信号, 详见各域结论", RiskItem.LEVEL_HIGH));
         }

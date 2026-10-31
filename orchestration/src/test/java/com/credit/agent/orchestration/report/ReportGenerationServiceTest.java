@@ -13,6 +13,7 @@ import com.credit.agent.infra.persistence.service.ApprovalReportService;
 import com.credit.agent.infra.persistence.service.LoanApplicationService;
 import com.credit.agent.orchestration.application.dto.ReportDto;
 import com.credit.agent.orchestration.application.exception.BizException;
+import com.credit.agent.orchestration.runtime.AgentRuntime;
 import com.credit.agent.orchestration.runtime.DomainBriefAssembler;
 import com.credit.agent.orchestration.runtime.IncomeConsistencyDetector;
 import com.credit.agent.orchestration.runtime.SupervisorAgent;
@@ -23,6 +24,7 @@ import org.mockito.ArgumentCaptor;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -30,13 +32,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** G3 报告生成与锁定单测: 版本递增、立即锁定、状态推进、终态拒绝。 */
+/** G3 报告生成与锁定单测: 版本递增、立即锁定、状态推进、终态拒绝、预算/步数降级。 */
 class ReportGenerationServiceTest {
 
     private final DomainBriefAssembler assembler = mock(DomainBriefAssembler.class);
@@ -45,21 +46,19 @@ class ReportGenerationServiceTest {
     private final LoanApplicationService applicationService = mock(LoanApplicationService.class);
     private final SupervisorAgent supervisor =
             new SupervisorAgent(new IncomeConsistencyDetector(new BigDecimal("0.30")));
-    private final ReportGenerationService service = new ReportGenerationService(assembler, domainAgent,
-            supervisor, new ReportContentBuilder(), reportService, applicationService);
 
     @Test
     @DisplayName("首次生成: version=1, locked=true, 结论与人工复核标记来自汇聚, 申请单推进 REPORT_READY")
     void firstGenerationIsLocked() {
         givenApplication(LoanApplication.STATUS_PROCESSING);
-        givenAnswers(incomeAnswer("30000"));
+        givenThreeDomains();
+        when(domainAgent.analyze(anyString(), any())).thenReturn(incomeAnswer("30000", 100));
         when(reportService.getOne(any(Wrapper.class), eq(false))).thenReturn(null);
 
-        ReportDto.View view = service.generate(9L, "trace-1", rules(), List.of());
+        ReportDto.View view = service(new AgentRuntime(8, 20_000))
+                .generate(9L, "trace-1", rules(), List.of());
 
-        ArgumentCaptor<ApprovalReport> captor = ArgumentCaptor.forClass(ApprovalReport.class);
-        verify(reportService).save(captor.capture());
-        ApprovalReport saved = captor.getValue();
+        ApprovalReport saved = savedReport();
         assertEquals(1, saved.getVersion());
         assertTrue(saved.getLocked());
         assertEquals("trace-1", saved.getTraceId());
@@ -78,17 +77,78 @@ class ReportGenerationServiceTest {
     @DisplayName("重跑: 生成 version=2, 旧版本不被修改(只读保留)")
     void rerunCreatesNextVersion() {
         givenApplication(LoanApplication.STATUS_NEED_MORE_INFO);
-        givenAnswers(incomeAnswer("30000"));
+        givenThreeDomains();
+        when(domainAgent.analyze(anyString(), any())).thenReturn(incomeAnswer("30000", 100));
         ApprovalReport existing = new ApprovalReport();
         existing.setId(5L);
         existing.setVersion(1);
         existing.setLocked(true);
         when(reportService.getOne(any(Wrapper.class), eq(false))).thenReturn(existing);
 
-        ReportDto.View view = service.generate(9L, "trace-2", rules(), List.of());
+        ReportDto.View view = service(new AgentRuntime(8, 20_000))
+                .generate(9L, "trace-2", rules(), List.of());
 
         assertEquals(2, view.version());
         verify(reportService, never()).updateById(any());
+    }
+
+    @Test
+    @DisplayName("步数到顶: 3 个域只分析 2 个 → 报告降级 NEED_MORE_INFO, 风险点含 AI_DEGRADED/MAX_STEPS")
+    void maxStepsProducesDegradedReport() {
+        givenApplication(LoanApplication.STATUS_PROCESSING);
+        givenThreeDomains();
+        AtomicInteger calls = new AtomicInteger();
+        when(domainAgent.analyze(anyString(), any())).thenAnswer(invocation -> {
+            calls.incrementAndGet();
+            return incomeAnswer("30000", 100);
+        });
+        when(reportService.getOne(any(Wrapper.class), eq(false))).thenReturn(null);
+
+        ReportDto.View view = service(new AgentRuntime(2, 100_000))
+                .generate(9L, "trace-1", rules(), List.of());
+
+        assertEquals(2, calls.get(), "第 3 个域不允许发起");
+        assertEquals("NEED_MORE_INFO", view.conclusion());
+        assertTrue(view.contentJson().contains("AI_DEGRADED"));
+        assertTrue(view.contentJson().contains("MAX_STEPS"));
+        assertTrue(view.requiresHumanReview());
+    }
+
+    @Test
+    @DisplayName("token 超预算: 立即掐断并降级, 已完成部分的引用仍进报告")
+    void budgetExceededProducesDegradedReport() {
+        givenApplication(LoanApplication.STATUS_PROCESSING);
+        givenThreeDomains();
+        when(domainAgent.analyze(anyString(), any())).thenReturn(incomeAnswer("30000", 100));
+        when(reportService.getOne(any(Wrapper.class), eq(false))).thenReturn(null);
+
+        ReportDto.View view = service(new AgentRuntime(8, 150))
+                .generate(9L, "trace-1", rules(), List.of());
+
+        assertEquals("NEED_MORE_INFO", view.conclusion());
+        assertTrue(view.contentJson().contains("BUDGET_EXCEEDED"));
+        assertTrue(view.contentJson().contains("chunkId"), "已完成域的证据仍要保留");
+    }
+
+    @Test
+    @DisplayName("掐断前已有域判异常: 结论降为 NEED_MORE_INFO, 但域异常风险与 AI_DEGRADED 都要在报告里")
+    void abnormalSurvivesDegrade() {
+        givenApplication(LoanApplication.STATUS_PROCESSING);
+        givenThreeDomains();
+        when(domainAgent.analyze(anyString(), any())).thenReturn(
+                new DomainAnswer(AgentRole.CREDIT, "征信异常: 近半年逾期 3 次",
+                        List.of(new CitationRef(2L, "征信.pdf", 1, 1)), 100, DomainVerdict.ABNORMAL, Map.of()),
+                new DomainAnswer(AgentRole.STATEMENT, "流水正常",
+                        List.of(new CitationRef(3L, "流水.pdf", 1, 1)), 100, DomainVerdict.NORMAL, Map.of()));
+        when(reportService.getOne(any(Wrapper.class), eq(false))).thenReturn(null);
+
+        ReportDto.View view = service(new AgentRuntime(8, 150))
+                .generate(9L, "trace-1", rules(), List.of());
+
+        assertEquals("NEED_MORE_INFO", view.conclusion());
+        assertTrue(view.contentJson().contains("DOMAIN_ABNORMAL"), "域异常不能被降级抹掉");
+        assertTrue(view.contentJson().contains("AI_DEGRADED"));
+        assertTrue(view.requiresHumanReview());
     }
 
     @Test
@@ -97,7 +157,7 @@ class ReportGenerationServiceTest {
         givenApplication(LoanApplication.STATUS_APPROVED);
 
         BizException ex = assertThrows(BizException.class,
-                () -> service.generate(9L, "trace-1", rules(), List.of()));
+                () -> service(new AgentRuntime(8, 20_000)).generate(9L, "trace-1", rules(), List.of()));
         assertEquals(409, ex.getStatus());
         verify(reportService, never()).save(any());
     }
@@ -107,33 +167,46 @@ class ReportGenerationServiceTest {
     void missingApplicationAndTrace() {
         when(applicationService.getById(9L)).thenReturn(null);
         assertEquals(404, assertThrows(BizException.class,
-                () -> service.generate(9L, "trace-1", rules(), List.of())).getStatus());
+                () -> service(new AgentRuntime(8, 20_000)).generate(9L, "trace-1", rules(), List.of()))
+                .getStatus());
 
         givenApplication(LoanApplication.STATUS_SUBMITTED);
         assertThrows(IllegalArgumentException.class,
-                () -> service.generate(9L, " ", rules(), List.of()));
+                () -> service(new AgentRuntime(8, 20_000)).generate(9L, " ", rules(), List.of()));
     }
 
     @Test
-    @DisplayName("冲突场景: 结论 CONFLICT 且报告风险点非空")
+    @DisplayName("冲突场景: 结论 CONFLICT, 报告里带 INCOME_INCONSISTENT")
     void conflictConclusionPropagates() {
         givenApplication(LoanApplication.STATUS_PROCESSING);
-        when(assembler.assemble(9L)).thenReturn(List.of(
-                DomainBrief.forMaterial(9L, List.of()), DomainBrief.forStatement(9L, List.of())));
+        givenThreeDomains();
         when(domainAgent.analyze(anyString(), any())).thenReturn(
                 new DomainAnswer(AgentRole.MATERIAL, "收入证明 3 万", List.of(new CitationRef(1L, "收入.pdf", 1, 1)),
                         100, DomainVerdict.NORMAL,
                         Map.of(DomainAnswer.FACT_INCOME_MONTHLY, new BigDecimal("30000"))),
                 new DomainAnswer(AgentRole.STATEMENT, "流水 2 万", List.of(new CitationRef(2L, "流水.pdf", 1, 1)),
                         100, DomainVerdict.NORMAL,
-                        Map.of(DomainAnswer.FACT_STATEMENT_MONTHLY_AVG, new BigDecimal("20000"))));
+                        Map.of(DomainAnswer.FACT_STATEMENT_MONTHLY_AVG, new BigDecimal("20000"))),
+                new DomainAnswer(AgentRole.CREDIT, "征信正常", List.of(new CitationRef(3L, "征信.pdf", 1, 1)),
+                        100, DomainVerdict.NORMAL, Map.of()));
         when(reportService.getOne(any(Wrapper.class), eq(false))).thenReturn(null);
 
-        ReportDto.View view = service.generate(9L, "trace-1", rules(), List.of());
+        ReportDto.View view = service(new AgentRuntime(8, 20_000))
+                .generate(9L, "trace-1", rules(), List.of());
 
         assertEquals("CONFLICT", view.conclusion());
         assertTrue(view.contentJson().contains("INCOME_INCONSISTENT"));
-        verify(domainAgent, atLeastOnce()).analyze(any(), any());
+    }
+
+    private ReportGenerationService service(AgentRuntime runtime) {
+        return new ReportGenerationService(assembler, domainAgent, supervisor, new ReportContentBuilder(),
+                reportService, applicationService, runtime);
+    }
+
+    private ApprovalReport savedReport() {
+        ArgumentCaptor<ApprovalReport> captor = ArgumentCaptor.forClass(ApprovalReport.class);
+        verify(reportService).save(captor.capture());
+        return captor.getValue();
     }
 
     private void givenApplication(String status) {
@@ -143,14 +216,16 @@ class ReportGenerationServiceTest {
         when(applicationService.getById(9L)).thenReturn(application);
     }
 
-    private void givenAnswers(DomainAnswer answer) {
-        when(assembler.assemble(9L)).thenReturn(List.of(DomainBrief.forMaterial(9L, List.of())));
-        when(domainAgent.analyze(anyString(), any())).thenReturn(answer);
+    private void givenThreeDomains() {
+        when(assembler.assemble(9L)).thenReturn(List.of(
+                DomainBrief.forMaterial(9L, List.of()),
+                DomainBrief.forStatement(9L, List.of()),
+                DomainBrief.forCredit(9L, List.of())));
     }
 
-    private static DomainAnswer incomeAnswer(String income) {
+    private static DomainAnswer incomeAnswer(String income, long tokens) {
         return new DomainAnswer(AgentRole.MATERIAL, "材料正常", List.of(new CitationRef(1L, "收入.pdf", 1, 1)),
-                100, DomainVerdict.NORMAL,
+                tokens, DomainVerdict.NORMAL,
                 Map.of(DomainAnswer.FACT_INCOME_MONTHLY, new BigDecimal(income)));
     }
 

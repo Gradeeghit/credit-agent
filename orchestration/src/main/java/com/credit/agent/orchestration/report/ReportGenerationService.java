@@ -10,7 +10,10 @@ import com.credit.agent.infra.persistence.service.ApprovalReportService;
 import com.credit.agent.infra.persistence.service.LoanApplicationService;
 import com.credit.agent.orchestration.application.dto.ReportDto;
 import com.credit.agent.orchestration.application.exception.BizException;
+import com.credit.agent.orchestration.runtime.AgentRunResult;
+import com.credit.agent.orchestration.runtime.AgentRuntime;
 import com.credit.agent.orchestration.runtime.DomainBriefAssembler;
+import com.credit.agent.orchestration.runtime.FailureReason;
 import com.credit.agent.orchestration.runtime.SupervisionResult;
 import com.credit.agent.orchestration.runtime.SupervisorAgent;
 import org.slf4j.Logger;
@@ -36,17 +39,20 @@ public class ReportGenerationService {
     private final ReportContentBuilder contentBuilder;
     private final ApprovalReportService reportService;
     private final LoanApplicationService applicationService;
+    private final AgentRuntime agentRuntime;
 
     public ReportGenerationService(DomainBriefAssembler briefAssembler, DomainAgent domainAgent,
                                    SupervisorAgent supervisor, ReportContentBuilder contentBuilder,
                                    ApprovalReportService reportService,
-                                   LoanApplicationService applicationService) {
+                                   LoanApplicationService applicationService,
+                                   AgentRuntime agentRuntime) {
         this.briefAssembler = briefAssembler;
         this.domainAgent = domainAgent;
         this.supervisor = supervisor;
         this.contentBuilder = contentBuilder;
         this.reportService = reportService;
         this.applicationService = applicationService;
+        this.agentRuntime = agentRuntime;
     }
 
     /**
@@ -70,9 +76,21 @@ public class ReportGenerationService {
         ensureNotTerminal(application);
 
         List<DomainBrief> briefs = briefAssembler.assemble(applicationId);
-        List<DomainAnswer> answers = briefs.stream().map(brief -> domainAgent.analyze(traceId, brief)).toList();
+        DomainBatchStepExecutor executor = new DomainBatchStepExecutor(domainAgent, traceId, briefs);
+        AgentRunResult run = briefs.isEmpty() ? null : agentRuntime.run(executor);
+        List<DomainAnswer> answers = run == null ? List.of() : executor.answers();
+        FailureReason failureReason = run == null ? null : run.failureReason();
+        if (run != null && run.isCompleted()) {
+            failureReason = null;
+        }
+
         SupervisionResult supervision = supervisor.aggregate(answers);
-        ReportContent content = contentBuilder.build(supervision, rules, pendingItems);
+        String conclusionBeforeDegrade = supervision.conclusion();
+        if (failureReason != null) {
+            supervision = degrade(supervision, failureReason);
+        }
+        ReportContent content = contentBuilder.build(supervision, rules, pendingItems, failureReason,
+                conclusionBeforeDegrade);
 
         ApprovalReport entity = new ApprovalReport();
         entity.setApplicationId(applicationId);
@@ -80,13 +98,13 @@ public class ReportGenerationService {
         entity.setVersion(nextVersion(applicationId));
         entity.setConclusion(supervision.conclusion());
         entity.setContentJson(ReportContentJson.write(content));
-        entity.setRequiresHumanReview(supervision.requiresHumanReview());
+        entity.setRequiresHumanReview(supervision.requiresHumanReview() || failureReason != null);
         entity.setLocked(true);
         reportService.save(entity);
 
         markReportReady(application, entity.getId());
-        log.info("报告已生成并锁定: applicationId={}, version={}, conclusion={}, traceId={}",
-                applicationId, entity.getVersion(), entity.getConclusion(), traceId);
+        log.info("报告已生成并锁定: applicationId={}, version={}, conclusion={}, traceId={}, degraded={}",
+                applicationId, entity.getVersion(), entity.getConclusion(), traceId, failureReason);
         return toView(entity);
     }
 
@@ -124,6 +142,20 @@ public class ReportGenerationService {
             throw BizException.conflict("APPLICATION_TERMINAL",
                     "申请单已处于终态 " + status + ", 不允许重新生成报告");
         }
+    }
+
+    /**
+     * 降级处理: 分析被掐断时不允许给出"建议通过"。
+     * 业务含义: 只分析了 1 个域就下 PASS_SUGGEST 等于用残缺证据背书, 一律降为 NEED_MORE_INFO;
+     * 已识别的 CONFLICT 保留 —— 冲突本身就是必须人看的结论。
+     */
+    private static SupervisionResult degrade(SupervisionResult supervision, FailureReason reason) {
+        if (SupervisionResult.CONFLICT.equals(supervision.conclusion())) {
+            return supervision;
+        }
+        log.warn("AI 分析被终止({}), 报告降级为 NEED_MORE_INFO", reason);
+        return new SupervisionResult(SupervisionResult.NEED_MORE_INFO, supervision.conflicts(),
+                supervision.citations(), true, supervision.tokensUsed());
     }
 
     private static ReportDto.View toView(ApprovalReport report) {

@@ -21,6 +21,9 @@ public record RiskItem(String code, String description, String level) {
     /** 域内异常但无跨域冲突时的风险码 */
     public static final String CODE_DOMAIN_ABNORMAL = "DOMAIN_ABNORMAL";
 
+    /** AI 分析被终止(超预算/超步数/模型不可用)时的风险码 */
+    public static final String CODE_AI_DEGRADED = "AI_DEGRADED";
+
     public RiskItem {
         if (code == null || code.isBlank()) {
             throw new IllegalArgumentException("风险码不能为空");

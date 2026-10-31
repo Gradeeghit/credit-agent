@@ -2,6 +2,7 @@ package com.credit.agent.orchestration.report;
 
 import com.credit.agent.agent.domain.CitationRef;
 import com.credit.agent.orchestration.runtime.DomainConflict;
+import com.credit.agent.orchestration.runtime.FailureReason;
 import com.credit.agent.orchestration.runtime.SupervisionResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -77,6 +78,21 @@ class ReportContentBuilderTest {
                 builder.build(supervision, rules(), List.of("补交近 6 个月流水")).pendingItems());
         assertTrue(builder.build(supervision, rules(), List.of()).pendingItems().get(0).contains("待补"));
         assertEquals(new BigDecimal("0.50"), builder.build(supervision, rules(), List.of()).confidence());
+    }
+
+    @Test
+    @DisplayName("降级前结论是建议拒绝: 即使被覆盖成 NEED_MORE_INFO, 域异常风险仍要保留")
+    void degradedButAbnormalStillKeepsDomainRisk() {
+        ReportContent content = builder.build(
+                new SupervisionResult(SupervisionResult.NEED_MORE_INFO, List.of(),
+                        List.of(new CitationRef(1L, "征信.pdf", 1, 1)), true, 100),
+                rules(), List.of(), FailureReason.BUDGET_EXCEEDED,
+                SupervisionResult.REJECT_SUGGEST);
+
+        assertEquals(SupervisionResult.NEED_MORE_INFO, content.conclusion());
+        assertEquals(2, content.risks().size());
+        assertEquals(RiskItem.CODE_DOMAIN_ABNORMAL, content.risks().get(0).code());
+        assertEquals(RiskItem.CODE_AI_DEGRADED, content.risks().get(1).code());
     }
 
     @Test
