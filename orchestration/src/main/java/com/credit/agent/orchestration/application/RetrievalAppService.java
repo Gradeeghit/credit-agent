@@ -2,6 +2,7 @@ package com.credit.agent.orchestration.application;
 
 import com.credit.agent.orchestration.application.dto.RetrievalDto;
 import com.credit.agent.orchestration.application.exception.BizException;
+import com.credit.agent.rag.retrieval.Citation;
 import com.credit.agent.rag.retrieval.RetrievedChunk;
 import com.credit.agent.rag.retrieval.VectorRetriever;
 import org.springframework.stereotype.Service;
@@ -53,16 +54,9 @@ public class RetrievalAppService {
     /**
      * 渲染引用文本(PRD C6 格式)。
      * 业务含义: 单页为 [文档名 p.12], 跨页为 [文档名 p.12-13]; 页码缺失时只保留文档名,
-     * 宁可信息少也不能编造页码。
+     * 宁可信息少也不能编造页码。实现已下沉到 rag, 供 E3 Tool 共用同一份规则。
      */
     static String citation(String docName, Integer pageStart, Integer pageEnd) {
-        String name = (docName == null || docName.isBlank()) ? "未知文档" : docName;
-        if (pageStart == null) {
-            return "[" + name + "]";
-        }
-        String pages = (pageEnd == null || pageEnd.equals(pageStart))
-                ? "p." + pageStart
-                : "p." + pageStart + "-" + pageEnd;
-        return "[" + name + " " + pages + "]";
+        return Citation.render(docName, pageStart, pageEnd);
     }
 }

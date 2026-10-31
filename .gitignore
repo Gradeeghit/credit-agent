@@ -34,3 +34,6 @@ build/
 
 ### 本地上传文件(政策文档/材料 PDF) ###
 uploads/
+
+### 本地 API Key(http-client 环境文件, 禁止入库) ###
+http-client.private.env.json
