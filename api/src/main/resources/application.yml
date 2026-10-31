@@ -6,7 +6,7 @@ spring:
 
   # PostgreSQL 16 + pgvector
   datasource:
-    url: '${DB_URL:jdbc:postgresql://localhost:5432/credit_agent}'
+    url: '${DB_URL:jdbc:postgresql://192.168.56.10:5432/123456}'
     username: '${DB_USERNAME:postgres}'
     password: '${DB_PASSWORD:postgres}'
     driver-class-name: org.postgresql.Driver
