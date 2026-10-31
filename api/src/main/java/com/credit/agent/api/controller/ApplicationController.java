@@ -1,9 +1,13 @@
 package com.credit.agent.api.controller;
 
 import com.credit.agent.api.web.ApiResponse;
+import com.credit.agent.orchestration.application.AnalysisAppService;
 import com.credit.agent.orchestration.application.ApplicationAppService;
 import com.credit.agent.orchestration.application.dto.ApplicationDto;
 import com.credit.agent.orchestration.application.dto.PageResult;
+import com.credit.agent.orchestration.application.dto.ReportDto;
+import com.credit.agent.orchestration.application.security.CurrentUser;
+import com.credit.agent.orchestration.application.security.UserRole;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -23,9 +27,23 @@ import org.springframework.web.bind.annotation.RestController;
 public class ApplicationController {
 
     private final ApplicationAppService applicationAppService;
+    private final AnalysisAppService analysisAppService;
 
-    public ApplicationController(ApplicationAppService applicationAppService) {
+    public ApplicationController(ApplicationAppService applicationAppService, AnalysisAppService analysisAppService) {
         this.applicationAppService = applicationAppService;
+        this.analysisAppService = analysisAppService;
+    }
+
+    /**
+     * 发起 AI 初审并生成锁定报告(F/G 主链)。
+     * 业务含义: 先由规则引擎算钱, 再由各域 Agent 分析; 只有信审员与主管可发起,
+     * 客户不具备触发分析的权限(客户只能看状态)。
+     */
+    @PostMapping("/{id}/analyze")
+    public ApiResponse<ReportDto.View> analyze(CurrentUser user, @PathVariable Long id,
+                                               @RequestParam(required = false) String traceId) {
+        user.requireAny(UserRole.CHECKER, UserRole.APPROVER);
+        return ApiResponse.ok(analysisAppService.analyze(id, traceId, null));
     }
 
     /** 分页查询申请单, 可按状态/客户过滤。 */
