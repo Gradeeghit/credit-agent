@@ -38,8 +38,9 @@ public class DomainAgent {
         if (brief == null) {
             throw new IllegalArgumentException("DomainBrief 不能为空");
         }
+        // 制度域强制先取证(tool_choice=required): 只挂 1 个工具, 等价于"必须先调 searchPolicy"; 其余域交给模型自主决定
         LlmAnswer answer = gateway.ask(new LlmRequest(traceId, systemPrompt(brief.role()), userPrompt(brief),
-                toolNames(brief.role())));
+                toolNames(brief.role()), brief.role() == AgentRole.POLICY));
         return new DomainAnswer(brief.role(), answer.text(), citations(brief), answer.totalTokens(),
                 VerdictParser.parse(answer.text()), factsOf(brief, answer.text()));
     }
@@ -94,7 +95,7 @@ public class DomainAgent {
     static String systemPrompt(AgentRole role) {
         return toolGuidance(role) + switch (role) {
             case MATERIAL -> "你是信贷初审的材料核验 Agent。只依据【本域证据】判断身份证、收入证明、用途说明是否齐全且自洽。"
-                    + "禁止引用征信、银行流水、制度条款的内容; 禁止计算任何金额、利率、月供。";
+                    + "禁止引用征信、银行流水、制度条款的内容; 禁止计算任何金额、利率、月供。请调用一次queryProduct工具取证 取值1查看产品信息。";
             case CREDIT -> "你是信贷初审的征信分析 Agent。只依据【本域证据】识别逾期、频繁查询、负债偏高等风险信号。"
                     + "禁止引用收入证明、银行流水的内容; 禁止计算任何金额。";
             case STATEMENT -> "你是信贷初审的银行流水分析 Agent。只依据【本域证据】判断收支稳定性与异常大额往来。"

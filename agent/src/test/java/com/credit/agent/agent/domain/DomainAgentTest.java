@@ -43,6 +43,7 @@ class DomainAgentTest {
         assertFalse(request.userPrompt().contains("月均入账"));
         assertEquals(AgentRole.MATERIAL, answer.role());
         assertEquals(150, answer.tokensUsed());
+        assertFalse(request.forceTool(), "材料域不强制调工具, 交给模型判断");
     }
 
     @Test
@@ -134,6 +135,7 @@ class DomainAgentTest {
         assertTrue(request.systemPrompt().contains("最多重试 1 次"));
         assertTrue(request.userPrompt().contains("先按【可用工具】取证"));
         assertEquals(List.of("searchPolicy"), request.toolNames());
+        assertTrue(request.forceTool(), "制度域必须强制先取证");
     }
 
     @Test

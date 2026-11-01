@@ -35,6 +35,10 @@ server:
 # 上传落盘目录(政策文档/材料 PDF)
 credit-agent:
   upload-dir: '${UPLOAD_DIR:uploads}'
+  agent:
+    # 制度域强制先取证: 下发 tool_choice=required(该域只挂 searchPolicy, 等价于必须先调它)。
+    # 端点不支持 tool_choice 时置 false, 整体退回"模型自主决定是否调工具"。
+    force-tool-enabled: ${FORCE_TOOL_ENABLED:true}
   security:
     # 开发阶段身份由前端直传 X-User-Id / X-User-Role, 尚未接入 Spring Security(I2/I3)
     # true  = 缺少身份头直接 401(默认, 安全优先)

@@ -5,7 +5,9 @@ import com.credit.agent.infra.observability.AiCallRecord;
 import com.credit.agent.tool.registry.LoanToolSet;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -19,11 +21,21 @@ public class SpringAiLlmGateway implements LlmGateway {
     private final ChatClient chatClient;
     private final LoanToolSet toolSet;
     private final AiCallLogger aiCallLogger;
+    private final String model;
+    private final boolean forceToolEnabled;
 
-    public SpringAiLlmGateway(ChatClient chatClient, LoanToolSet toolSet, AiCallLogger aiCallLogger) {
+    /**
+     * @param model            当前 chat 模型, 强制工具时要显式带进请求(options 不一定与默认值合并)
+     * @param forceToolEnabled 强制工具总开关; 端点不支持 tool_choice 时置 false 即可整体退回"模型自主决定"
+     */
+    public SpringAiLlmGateway(ChatClient chatClient, LoanToolSet toolSet, AiCallLogger aiCallLogger,
+                              @Value("${spring.ai.openai.chat.options.model:}") String model,
+                              @Value("${credit-agent.agent.force-tool-enabled:true}") boolean forceToolEnabled) {
         this.chatClient = chatClient;
         this.toolSet = toolSet;
         this.aiCallLogger = aiCallLogger;
+        this.model = model;
+        this.forceToolEnabled = forceToolEnabled;
     }
 
     /**
@@ -59,6 +71,20 @@ public class SpringAiLlmGateway implements LlmGateway {
         } catch (RuntimeException e) {
             throw new LlmCallException("模型调用失败: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 强制工具时下发的 options: tool_choice=required。
+     * 业务含义: 制度域只挂一个工具, required 等价于"必须先调 searchPolicy 取证再回答";
+     * 用 required 而不是指定函数名, 是因为兼容端点对"指定函数"的支持参差不齐, 而 required 是 OpenAI 标准值。
+     * 注意: 必须显式带上 model —— 请求级 options 不保证与 yml 默认值合并。
+     */
+    private OpenAiChatOptions forceToolOptions() {
+        OpenAiChatOptions.Builder builder = OpenAiChatOptions.builder().toolChoice("required");
+        if (model != null && !model.isBlank()) {
+            builder.model(model);
+        }
+        return builder.build();
     }
 
     /**
