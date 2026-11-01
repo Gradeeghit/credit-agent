@@ -57,6 +57,10 @@ public class SpringAiLlmGateway implements LlmGateway {
                     .system(request.systemPrompt() == null ? "" : request.systemPrompt())
                     .user(request.userPrompt());
             ToolCallback[] callbacks = callbacksFor(request);
+            // 强制工具: 本域没工具时不下发(无工具的 tool_choice=required 会被端点判 400)
+            if (request.forceTool() && forceToolEnabled && callbacks.length > 0) {
+                spec = spec.options(forceToolOptions());
+            }
             if (callbacks.length > 0) {
                 spec = spec.toolCallbacks(callbacks);
             }

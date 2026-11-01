@@ -4,6 +4,7 @@ import com.credit.agent.agent.domain.AgentRole;
 import com.credit.agent.agent.domain.DomainAgent;
 import com.credit.agent.agent.domain.DomainAnswer;
 import com.credit.agent.agent.domain.DomainBrief;
+import com.credit.agent.infra.observability.TraceMdc;
 import com.credit.agent.orchestration.runtime.AgentStepExecutor;
 import com.credit.agent.orchestration.runtime.StepResult;
 
@@ -48,7 +49,14 @@ public class DomainBatchStepExecutor implements AgentStepExecutor {
     public StepResult act(int stepIndex) {
         DomainBrief brief = briefs.get(stepIndex - 1);
         long startNanos = System.nanoTime();
-        DomainAnswer answer = domainAgent.analyze(traceId, brief);
+        // 把步序号放进 MDC: 工具在 ChatModel 内部循环里被调用, 只能靠线程上下文知道自己属于哪一步
+        TraceMdc.bindStepIndex(stepIndex);
+        DomainAnswer answer;
+        try {
+            answer = domainAgent.analyze(traceId, brief);
+        } finally {
+            TraceMdc.clearStepIndex();
+        }
         long latencyMs = (System.nanoTime() - startNanos) / 1_000_000L;
         answers.add(answer);
         if (listener != null) {
