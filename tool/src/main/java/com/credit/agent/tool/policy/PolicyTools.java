@@ -1,5 +1,6 @@
 package com.credit.agent.tool.policy;
 
+import com.credit.agent.infra.persistence.entity.Document;
 import com.credit.agent.rag.retrieval.Citation;
 import com.credit.agent.rag.retrieval.RetrievedChunk;
 import com.credit.agent.rag.retrieval.VectorRetriever;
@@ -70,7 +71,9 @@ public class PolicyTools {
         }
         try {
             List<RetrievedChunk> chunks = CompletableFuture
-                    .supplyAsync(() -> vectorRetriever.search(keyword.strip(), size, null), executor)
+                    // 只检索制度类文档: 全库检索会把客户材料当条款召回(引用错乱 + 越界读取)
+                    .supplyAsync(() -> vectorRetriever.searchByDocType(keyword.strip(), size,
+                            Document.DOC_TYPE_POLICY_DOC), executor)
                     .get(timeoutMs, TimeUnit.MILLISECONDS);
             return ToolResponse.ok(chunks.stream().map(PolicyTools::toHit).toList());
         } catch (TimeoutException e) {

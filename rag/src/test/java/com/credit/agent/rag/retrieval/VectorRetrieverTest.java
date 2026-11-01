@@ -36,4 +36,16 @@ class VectorRetrieverTest {
     void scoreEqualsOneMinusDistance() {
         assertTrue(VectorRetriever.SQL_BY_QUERY.contains("1 - (embedding <=> CAST(? AS vector)) AS score"));
     }
+
+    @Test
+    @DisplayName("按类型检索的 SQL: 必须 join document 且同时校验两侧 is_current 与 doc_type")
+    void docTypeSqlIsScoped() {
+        String sql = VectorRetriever.SQL_BY_QUERY_AND_DOC_TYPE;
+
+        assertTrue(sql.contains("JOIN document d"), "必须 join document 才能按 doc_type 过滤");
+        assertTrue(sql.contains("c.is_current = true"), "切片侧必须过滤已作废");
+        assertTrue(sql.contains("d.is_current = true"), "文档侧也必须过滤已作废版本");
+        assertTrue(sql.contains("d.doc_type = ?"), "必须按材料类型收口, 否则会召回客户材料");
+        assertTrue(sql.contains("<=> CAST(? AS vector)"), "必须用余弦距离");
+    }
 }

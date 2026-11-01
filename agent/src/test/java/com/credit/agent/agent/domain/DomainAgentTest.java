@@ -121,4 +121,27 @@ class DomainAgentTest {
 
         assertEquals(new BigDecimal("30000.00"), answer.fact(DomainAnswer.FACT_INCOME_MONTHLY));
     }
+
+    @Test
+    @DisplayName("工具引导: 只点名本域挂载的工具, 空证据时要求先取证")
+    void promptGuidesToolUse() {
+        agent.analyze("trace-1", DomainBrief.forPolicy(List.of()));
+
+        LlmRequest request = captured.get();
+        assertTrue(request.systemPrompt().contains("searchPolicy"));
+        assertFalse(request.systemPrompt().contains("queryProduct"), "制度域不该出现产品查询工具");
+        assertTrue(request.systemPrompt().contains("DEGRADED"));
+        assertTrue(request.systemPrompt().contains("最多重试 1 次"));
+        assertTrue(request.userPrompt().contains("先按【可用工具】取证"));
+        assertEquals(List.of("searchPolicy"), request.toolNames());
+    }
+
+    @Test
+    @DisplayName("按域挂工具: 取证域只挂 queryProduct, 汇总域一个都不挂")
+    void toolSubsetPerRole() {
+        assertEquals(List.of("queryProduct"), DomainAgent.toolNames(AgentRole.MATERIAL));
+        assertEquals(List.of("queryProduct"), DomainAgent.toolNames(AgentRole.STATEMENT));
+        assertEquals(List.of(), DomainAgent.toolNames(AgentRole.SUPERVISOR));
+        assertTrue(DomainAgent.systemPrompt(AgentRole.SUPERVISOR).contains("本域不提供任何工具"));
+    }
 }

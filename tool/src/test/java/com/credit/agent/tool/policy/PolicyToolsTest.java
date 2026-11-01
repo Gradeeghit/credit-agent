@@ -27,7 +27,7 @@ class PolicyToolsTest {
     @Test
     @DisplayName("命中制度条款: 每条都带 [文档名 p.起-止] 引用与 chunkId 回链")
     void hitCarriesCitation() {
-        when(vectorRetriever.search(anyString(), anyInt(), any())).thenReturn(List.of(
+        when(vectorRetriever.searchByDocType(anyString(), anyInt(), anyString())).thenReturn(List.of(
                 new RetrievedChunk(11L, 6L, "2024年报.pdf", "第一章 总则", "正文", 12, 13, 0.87)));
 
         ToolResponse<List<PolicyHit>> response =
@@ -42,7 +42,7 @@ class PolicyToolsTest {
     @Test
     @DisplayName("检索超时: DEGRADED + TOOL_TIMEOUT + 空结果, 不抛异常")
     void timeoutDegrades() {
-        when(vectorRetriever.search(anyString(), anyInt(), any())).thenAnswer(invocation -> {
+        when(vectorRetriever.searchByDocType(anyString(), anyInt(), anyString())).thenAnswer(invocation -> {
             Thread.sleep(500);
             return List.of();
         });
@@ -62,7 +62,7 @@ class PolicyToolsTest {
 
         assertEquals("PARAM_INVALID", tools.searchPolicy("  ", 5).code());
         assertEquals("PARAM_INVALID", tools.searchPolicy(null, 5).code());
-        verify(vectorRetriever, never()).search(anyString(), anyInt(), any());
+        verify(vectorRetriever, never()).searchByDocType(anyString(), anyInt(), anyString());
     }
 
     @Test
@@ -77,7 +77,8 @@ class PolicyToolsTest {
     @Test
     @DisplayName("检索内部异常: 包装成 RETRIEVAL_FAILED, 堆栈不进 LLM")
     void retrievalFailureIsWrapped() {
-        when(vectorRetriever.search(anyString(), anyInt(), any())).thenThrow(new IllegalStateException("db down"));
+        when(vectorRetriever.searchByDocType(anyString(), anyInt(), anyString()))
+                .thenThrow(new IllegalStateException("db down"));
 
         ToolResponse<List<PolicyHit>> response =
                 new PolicyTools(vectorRetriever, 3000).searchPolicy("额度", 5);

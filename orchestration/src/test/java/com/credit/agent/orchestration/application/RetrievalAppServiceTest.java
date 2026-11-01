@@ -33,7 +33,7 @@ class RetrievalAppServiceTest {
                 new RetrievedChunk(11L, 6L, "2024年报.pdf", "第一章 总则", "正文", 12, 13, 0.87)));
 
         List<RetrievalDto.Hit> hits = service.search(
-                new RetrievalDto.SearchRequest("逾期几次算不良", null, null));
+                new RetrievalDto.SearchRequest("逾期几次算不良", null, null, null));
 
         assertEquals(1, hits.size());
         assertEquals("[2024年报.pdf p.12-13]", hits.get(0).citation());
@@ -53,7 +53,7 @@ class RetrievalAppServiceTest {
     @DisplayName("空问题不发起检索, 直接 400")
     void blankQueryShouldFail() {
         BizException ex = assertThrows(BizException.class,
-                () -> service.search(new RetrievalDto.SearchRequest("  ", 5, null)));
+                () -> service.search(new RetrievalDto.SearchRequest("  ", 5, null, null)));
 
         assertEquals(400, ex.getStatus());
         verify(vectorRetriever, never()).search(anyString(), anyInt(), isNull());
@@ -63,8 +63,8 @@ class RetrievalAppServiceTest {
     @DisplayName("召回条数越界返回 400, 防止一次拉全库")
     void limitOutOfRangeShouldFail() {
         assertEquals(400, assertThrows(BizException.class,
-                () -> service.search(new RetrievalDto.SearchRequest("额度", 100, null))).getStatus());
+                () -> service.search(new RetrievalDto.SearchRequest("额度", 100, null, null))).getStatus());
         assertEquals(400, assertThrows(BizException.class,
-                () -> service.search(new RetrievalDto.SearchRequest("额度", 0, null))).getStatus());
+                () -> service.search(new RetrievalDto.SearchRequest("额度", 0, null, null))).getStatus());
     }
 }

@@ -11,6 +11,8 @@ import com.credit.agent.infra.persistence.service.DocumentChunkService;
 import com.credit.agent.infra.persistence.service.DocumentService;
 import com.credit.agent.infra.persistence.service.LoanApplicationService;
 import com.credit.agent.orchestration.application.exception.BizException;
+import com.credit.agent.rag.retrieval.RetrievedChunk;
+import com.credit.agent.rag.retrieval.VectorRetriever;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -21,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -30,8 +34,9 @@ class DomainBriefAssemblerTest {
     private final DocumentService documentService = mock(DocumentService.class);
     private final DocumentChunkService chunkService = mock(DocumentChunkService.class);
     private final LoanApplicationService applicationService = mock(LoanApplicationService.class);
+    private final VectorRetriever vectorRetriever = mock(VectorRetriever.class);
     private final DomainBriefAssembler assembler =
-            new DomainBriefAssembler(documentService, chunkService, applicationService);
+            new DomainBriefAssembler(documentService, chunkService, applicationService, vectorRetriever);
 
     @Test
     @DisplayName("按 doc_type 分桶: 材料 2 条 / 征信 1 条 / 流水 1 条, 外来 docId 的切片被丢弃")
@@ -47,7 +52,7 @@ class DomainBriefAssemblerTest {
 
         List<DomainBrief> briefs = assembler.assemble(9L);
 
-        assertEquals(3, briefs.size());
+        assertEquals(4, briefs.size(), "三个业务域 + 一个制度域");
         DomainBrief material = byRole(briefs, AgentRole.MATERIAL);
         assertEquals(2, material.materials().size());
         assertTrue(material.creditReports().isEmpty());
@@ -56,6 +61,43 @@ class DomainBriefAssemblerTest {
         assertEquals("收入证明.pdf", material.materials().get(1).docName(), "无 metadata 时取文件名");
         assertEquals(1, byRole(briefs, AgentRole.CREDIT).creditReports().size());
         assertEquals(1, byRole(briefs, AgentRole.STATEMENT).statements().size());
+    }
+
+    @Test
+    @DisplayName("制度域: 按申请单拼 query 检索 POLICY_DOC 切片, 只装入检索命中项")
+    void policyBriefUsesRetrieval() {
+        LoanApplication application = givenApplication("20000.00", LoanApplication.INCOME_TYPE_MONTHLY);
+        application.setAmount(new BigDecimal("200000.00"));
+        application.setTermMonths(12);
+        application.setPurpose("装修");
+        when(documentService.list(any(Wrapper.class))).thenReturn(List.of());
+        when(chunkService.list(any(Wrapper.class))).thenReturn(List.of());
+        when(vectorRetriever.searchByDocType(anyString(), anyInt(), anyString())).thenReturn(List.of(
+                new RetrievedChunk(51L, 8L, "2024年报.pdf", "第三章 准入", "逾期 3 次以上不予准入", 12, 13, 0.88)));
+
+        DomainBrief policy = byRole(assembler.assemble(9L), AgentRole.POLICY);
+
+        assertEquals(1, policy.policyChunks().size());
+        assertEquals("2024年报.pdf", policy.policyChunks().get(0).docName());
+        assertEquals(51L, policy.policyChunks().get(0).chunkId());
+        assertTrue(DomainBriefAssembler.policyQuery(application).contains("用途装修"));
+        assertTrue(DomainBriefAssembler.policyQuery(application).contains("金额200000.00元"));
+    }
+
+    @Test
+    @DisplayName("制度检索失败: 只降级为空气证据, 不影响另外三个域")
+    void policyRetrievalFailureDegrades() {
+        givenApplication("20000.00", LoanApplication.INCOME_TYPE_MONTHLY);
+        when(documentService.list(any(Wrapper.class))).thenReturn(List.of());
+        when(chunkService.list(any(Wrapper.class))).thenReturn(List.of());
+        when(vectorRetriever.searchByDocType(anyString(), anyInt(), anyString()))
+                .thenThrow(new IllegalStateException("embedding down"));
+
+        List<DomainBrief> briefs = assembler.assemble(9L);
+
+        assertEquals(4, briefs.size());
+        assertTrue(byRole(briefs, AgentRole.POLICY).evidence().isEmpty());
+        assertTrue(briefs.stream().anyMatch(b -> b.role() == AgentRole.MATERIAL));
     }
 
     @Test
@@ -98,12 +140,13 @@ class DomainBriefAssemblerTest {
         assertThrows(IllegalArgumentException.class, () -> assembler.assemblePolicy(0));
     }
 
-    private void givenApplication(String income, String incomeType) {
+    private LoanApplication givenApplication(String income, String incomeType) {
         LoanApplication application = new LoanApplication();
         application.setId(9L);
         application.setIncome(new BigDecimal(income));
         application.setIncomeType(incomeType);
         when(applicationService.getById(9L)).thenReturn(application);
+        return application;
     }
 
     private static DomainBrief byRole(List<DomainBrief> briefs, AgentRole role) {

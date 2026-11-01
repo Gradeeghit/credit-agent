@@ -5,6 +5,7 @@ import com.credit.agent.infra.observability.AiCallRecord;
 import com.credit.agent.tool.registry.LoanToolSet;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
 /**
@@ -40,12 +41,14 @@ public class SpringAiLlmGateway implements LlmGateway {
         }
         long startNanos = System.nanoTime();
         try {
-            ChatResponse response = chatClient.prompt()
+            ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                     .system(request.systemPrompt() == null ? "" : request.systemPrompt())
-                    .user(request.userPrompt())
-                    .toolCallbacks(toolSet.callbacks())
-                    .call()
-                    .chatResponse();
+                    .user(request.userPrompt());
+            ToolCallback[] callbacks = callbacksFor(request);
+            if (callbacks.length > 0) {
+                spec = spec.toolCallbacks(callbacks);
+            }
+            ChatResponse response = spec.call().chatResponse();
             long latencyMs = (System.nanoTime() - startNanos) / 1_000_000L;
             LlmAnswer answer = LlmResponses.toAnswer(response);
             aiCallLogger.log(new AiCallRecord(request.traceId(), LlmResponses.modelOf(response),
@@ -56,5 +59,17 @@ public class SpringAiLlmGateway implements LlmGateway {
         } catch (RuntimeException e) {
             throw new LlmCallException("模型调用失败: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 取本次要挂的工具。
+     * 业务含义: 请求没指定子集(null)时按全量挂载, 保持旧调用方行为;
+     * 指定了就只挂这些 —— 制度域不会看到 queryProduct, 汇总域一个工具都看不到。
+     */
+    private ToolCallback[] callbacksFor(LlmRequest request) {
+        if (request.toolNames() == null) {
+            return toolSet.callbacks() == null ? new ToolCallback[0] : toolSet.callbacks();
+        }
+        return toolSet.subset(request.toolNames().toArray(new String[0])).callbacks();
     }
 }

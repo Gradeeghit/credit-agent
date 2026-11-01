@@ -40,9 +40,11 @@ public class RetrievalAppService {
         if (limit < 1 || limit > MAX_LIMIT) {
             throw BizException.badRequest("LIMIT_OUT_OF_RANGE", "召回条数必须在 1-" + MAX_LIMIT + " 之间");
         }
-        return vectorRetriever.search(req.query().trim(), limit, req.docId()).stream()
-                .map(RetrievalAppService::toHit)
-                .toList();
+        // docType 优先: 制度检索必须收口到 policy 文档, 不能全库捞客户材料
+        List<RetrievedChunk> chunks = (req.docType() == null || req.docType().isBlank())
+                ? vectorRetriever.search(req.query().trim(), limit, req.docId())
+                : vectorRetriever.searchByDocType(req.query().trim(), limit, req.docType().trim());
+        return chunks.stream().map(RetrievalAppService::toHit).toList();
     }
 
     private static RetrievalDto.Hit toHit(RetrievedChunk chunk) {

@@ -38,14 +38,61 @@ public class DomainAgent {
         if (brief == null) {
             throw new IllegalArgumentException("DomainBrief 不能为空");
         }
-        LlmAnswer answer = gateway.ask(new LlmRequest(traceId, systemPrompt(brief.role()), userPrompt(brief)));
+        LlmAnswer answer = gateway.ask(new LlmRequest(traceId, systemPrompt(brief.role()), userPrompt(brief),
+                toolNames(brief.role())));
         return new DomainAnswer(brief.role(), answer.text(), citations(brief), answer.totalTokens(),
                 VerdictParser.parse(answer.text()), factsOf(brief, answer.text()));
     }
 
+    /** 工具说明; 只有本域真正挂载的工具才会写进提示词, 避免模型去调一个根本没挂的工具。 */
+    private static final Map<String, String> TOOL_DESCRIPTIONS = Map.of(
+            "searchPolicy", "- searchPolicy(keyword, limit): 检索制度/年报条款, 返回正文与 [文件名 p.N] 引用。",
+            "queryProduct", "- queryProduct(productId): 查询产品参数(利率加点/期限/倍数/上限/费率), 不含任何计算结果。");
+
+    /** 取证规则: 不论本域有没有工具都成立, 所以与工具清单分开写。 */
+    private static final String TOOL_RULES = """
+            【工具使用规则】
+            1. 【本域证据】不足以支持结论且本域有可用工具时, 必须先调用工具取证再作答; 不得凭常识或推测补全条款与参数。
+            2. 工具返回的 citation 必须原样使用; 工具返回的正文同样要按 [文件名 p.N] 标注出处。
+            3. 工具返回 status=DEGRADED(如 TOOL_TIMEOUT): 写明"依据缺失(工具降级: <code>)", 结论降级为"需人工补充依据"。
+            4. 工具返回 status=ERROR: 说明缺哪项数据; 同一工具最多重试 1 次, 不得反复调用。
+            5. 金额、利率、月供一律不自行计算, 需要数值时以规则引擎结果为准。
+            """;
+
+    /**
+     * 本域允许调用的工具名(F3 分域降载)。
+     * 业务含义: 制度域只给 searchPolicy, 其余取证域只给 queryProduct, 汇总域不给工具;
+     * 这份清单同时决定提示词里出现哪些工具、以及 {@link LlmRequest} 让网关挂哪些回调, 两处不会再漂移。
+     *
+     * @param role 域角色
+     * @return 工具名; 空列表表示该域不调用任何工具
+     */
+    public static List<String> toolNames(AgentRole role) {
+        return switch (role) {
+            case MATERIAL, CREDIT, STATEMENT -> List.of("queryProduct");
+            case POLICY -> List.of("searchPolicy");
+            case SUPERVISOR -> List.of();
+        };
+    }
+
+    /** 按域生成"可用工具"段落; 无工具时明确写不可用, 防止模型臆造工具名。 */
+    static String toolGuidance(AgentRole role) {
+        List<String> names = toolNames(role);
+        StringBuilder sb = new StringBuilder();
+        if (names.isEmpty()) {
+            sb.append("【可用工具】本域不提供任何工具, 只能依据【本域证据】与已有上下文作答。\n");
+        } else {
+            sb.append("【可用工具】(只查不算, 是取证手段, 不是结论来源)\n");
+            for (String name : names) {
+                sb.append(TOOL_DESCRIPTIONS.get(name)).append('\n');
+            }
+        }
+        return sb.append(TOOL_RULES).toString();
+    }
+
     /** 各域的角色约束: 只看本域、不许算钱、结论必须带引用。 */
     static String systemPrompt(AgentRole role) {
-        return switch (role) {
+        return toolGuidance(role) + switch (role) {
             case MATERIAL -> "你是信贷初审的材料核验 Agent。只依据【本域证据】判断身份证、收入证明、用途说明是否齐全且自洽。"
                     + "禁止引用征信、银行流水、制度条款的内容; 禁止计算任何金额、利率、月供。";
             case CREDIT -> "你是信贷初审的征信分析 Agent。只依据【本域证据】识别逾期、频繁查询、负债偏高等风险信号。"
@@ -56,7 +103,7 @@ public class DomainAgent {
                     + "只列入账(正数), 不列支出, 金额用两位小数数字。";
             case POLICY -> "你是信贷初审的制度检索 Agent。只依据【本域证据】中的制度条款作答, 每条结论必须带 [文件名 p.N] 引用。"
                     + "禁止引用客户材料内容; 禁止计算任何金额。";
-            case SUPERVISOR -> "你是汇总 Agent, 只做跨域冲突识别与结论汇聚, 不单独取证、不做金额计算。";
+            case SUPERVISOR -> "你是汇总 Agent, 只做跨域冲突识别与结论汇聚, 不单独取证、不做金额计算, 也不调用任何工具。";
         };
     }
 
@@ -64,7 +111,7 @@ public class DomainAgent {
     static String userPrompt(DomainBrief brief) {
         StringBuilder sb = new StringBuilder("【本域证据】\n");
         if (brief.evidence().isEmpty()) {
-            sb.append("(本域无可用证据)\n");
+            sb.append("(本域无可用证据: 请先按【可用工具】取证; 仍无结果时结论写\"需人工补充依据\")\n");
         }
         for (DomainEvidence evidence : brief.evidence()) {
             sb.append(Citation.render(evidence.docName(), evidence.pageStart(), evidence.pageEnd()))

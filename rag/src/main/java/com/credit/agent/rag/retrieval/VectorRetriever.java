@@ -33,6 +33,26 @@ public class VectorRetriever {
     static final String SQL_BY_QUERY_AND_DOC = SELECT_COLUMNS
             + "\n  AND doc_id = ?\nORDER BY embedding <=> CAST(? AS vector)\nLIMIT ?";
 
+    /**
+     * 按材料类型检索(制度检索必须用它)。
+     * 业务含义: 制度检索只能命中 policy 类文档 —— 全库检索会把客户身份证/流水切片当成"制度条款"召回,
+     * 既是引用错误, 也是越界读取; 因此必须 join document 按 doc_type 收口。
+     */
+    private static final String SELECT_COLUMNS_OF_DOC_TYPE = """
+            SELECT c.id, c.doc_id, c.content, c.page_start, c.page_end,
+                   c.metadata->>'docName' AS doc_name,
+                   c.metadata->>'section' AS section,
+                   1 - (c.embedding <=> CAST(? AS vector)) AS score
+            FROM document_chunk c
+            JOIN document d ON d.id = c.doc_id
+            WHERE c.is_current = true
+              AND d.is_current = true
+              AND c.embedding IS NOT NULL""";
+
+    /** 按类型检索; 参数顺序: 向量, doc_type, 向量, limit */
+    static final String SQL_BY_QUERY_AND_DOC_TYPE = SELECT_COLUMNS_OF_DOC_TYPE
+            + "\n  AND d.doc_type = ?\nORDER BY c.embedding <=> CAST(? AS vector)\nLIMIT ?";
+
     private final JdbcTemplate jdbcTemplate;
     private final EmbeddingService embeddingService;
 
@@ -56,6 +76,24 @@ public class VectorRetriever {
             return jdbcTemplate.query(SQL_BY_QUERY, this::toChunk, literal, literal, limit);
         }
         return jdbcTemplate.query(SQL_BY_QUERY_AND_DOC, this::toChunk, literal, docId, literal, limit);
+    }
+
+    /**
+     * 按材料类型召回(制度检索的唯一正确入口)。
+     * 业务含义: 只召回指定 doc_type 的当前有效切片, 避免把客户材料当制度依据;
+     * 文档维度同样要求 is_current, 重传后的旧版本不会命中。
+     *
+     * @param query   中文问题或关键词
+     * @param limit   召回条数
+     * @param docType document.doc_type, 如 POLICY_DOC
+     * @throws IllegalArgumentException docType 为空
+     */
+    public List<RetrievedChunk> searchByDocType(String query, int limit, String docType) {
+        if (docType == null || docType.isBlank()) {
+            throw new IllegalArgumentException("docType 不能为空: 不限定类型的检索会跨材料域串数据");
+        }
+        String literal = VectorFormatter.toLiteral(embeddingService.embedOne(query));
+        return jdbcTemplate.query(SQL_BY_QUERY_AND_DOC_TYPE, this::toChunk, literal, docType, literal, limit);
     }
 
     private RetrievedChunk toChunk(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
