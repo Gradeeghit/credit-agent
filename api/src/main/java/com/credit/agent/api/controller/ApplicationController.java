@@ -3,9 +3,9 @@ package com.credit.agent.api.controller;
 import com.credit.agent.api.web.ApiResponse;
 import com.credit.agent.orchestration.application.AnalysisAppService;
 import com.credit.agent.orchestration.application.ApplicationAppService;
+import com.credit.agent.orchestration.application.dto.AnalysisDto;
 import com.credit.agent.orchestration.application.dto.ApplicationDto;
 import com.credit.agent.orchestration.application.dto.PageResult;
-import com.credit.agent.orchestration.application.dto.ReportDto;
 import com.credit.agent.orchestration.application.security.CurrentUser;
 import com.credit.agent.orchestration.application.security.UserRole;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -40,8 +40,8 @@ public class ApplicationController {
      * 客户不具备触发分析的权限(客户只能看状态)。
      */
     @PostMapping("/{id}/analyze")
-    public ApiResponse<ReportDto.View> analyze(CurrentUser user, @PathVariable Long id,
-                                               @RequestParam(required = false) String traceId) {
+    public ApiResponse<AnalysisDto.Result> analyze(CurrentUser user, @PathVariable Long id,
+                                                   @RequestParam(required = false) String traceId) {
         user.requireAny(UserRole.CHECKER, UserRole.APPROVER);
         return ApiResponse.ok(analysisAppService.analyze(id, traceId, null));
     }

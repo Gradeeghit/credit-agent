@@ -41,6 +41,11 @@ credit-agent:
     # false = 降级为匿名身份(无任何权限), 仅供本地联调临时使用
     identity-required: ${IDENTITY_REQUIRED:true}
   ai:
+    # H3 成本: 模型单价(元/千 token); 留空则 ai_call_log.cost 为 NULL(不瞎估)
+    # 口径属 PRD §12 待确认项, 确定后填这里或设环境变量
+    price:
+      prompt-per-k: '${AI_PRICE_PROMPT_PER_K:1}'
+      completion-per-k: '${AI_PRICE_COMPLETION_PER_K:2}'
     # B5 向量化: 独立于 chat 的连接参数, 由 EmbeddingModelConfig 单独构造 Bean
     embedding:
       # 总开关: false 时切片只落库不向量化, 检索退化为纯 BM25
@@ -69,8 +74,18 @@ mybatis-plus:
 # (如 com.credit.agent.infra.persistence.mapper.ProductMapper.insert),
 # 所以必须按 mapper 包开 debug; 配 org.apache.ibatis.mapping.SqlSource 是无效的(它只是个接口类)
 logging:
+  pattern:
+    # H1: 每行日志带 traceId(MDC), 便于 grep 一条链路
+    level: "%5p [%X{traceId:-}]"
   level:
     com.credit.agent.infra.persistence.mapper: debug
+    # ---- Spring AI 模型请求/响应日志 ----
+    # SimpleLoggerAdvisor 与 DefaultToolCallingManager 内部都只调 logger.debug(...),
+    # root 为 INFO 时加 advisor 也不会输出任何内容。
+    # 默认 info(静默): prompt 里含客户姓名/证件号/流水明细, 属敏感数据, 不默认开。
+    # 联调时临时打开: 设环境变量 AI_LOG_LEVEL=debug
+    org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor: '${AI_LOG_LEVEL:debug}'
+    org.springframework.ai.model.tool.DefaultToolCallingManager: '${AI_LOG_LEVEL:debug}'
 
 
 

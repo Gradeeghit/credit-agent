@@ -13,6 +13,8 @@ import com.credit.agent.infra.persistence.service.ApprovalReportService;
 import com.credit.agent.infra.persistence.service.LoanApplicationService;
 import com.credit.agent.orchestration.application.dto.ReportDto;
 import com.credit.agent.orchestration.application.exception.BizException;
+import com.credit.agent.agent.llm.LlmCallException;
+import com.credit.agent.orchestration.application.observability.TraceRecorder;
 import com.credit.agent.orchestration.runtime.AgentRuntime;
 import com.credit.agent.orchestration.runtime.DomainBriefAssembler;
 import com.credit.agent.orchestration.runtime.IncomeConsistencyDetector;
@@ -152,6 +154,28 @@ class ReportGenerationServiceTest {
     }
 
     @Test
+    @DisplayName("H9: 模型不可用时仍产出降级报告, 结论 NEED_MORE_INFO, 引用退化为材料证据")
+    void llmDownStillProducesDegradedReport() {
+        givenApplication(LoanApplication.STATUS_PROCESSING);
+        when(assembler.assemble(9L)).thenReturn(List.of(
+                DomainBrief.forMaterial(9L, List.of(evidence(1L, "收入证明.pdf"))),
+                DomainBrief.forStatement(9L, List.of(evidence(2L, "流水.pdf"))),
+                DomainBrief.forCredit(9L, List.of(evidence(3L, "征信.pdf")))));
+        when(domainAgent.analyze(anyString(), any())).thenThrow(new LlmCallException("connection refused"));
+        when(reportService.getOne(any(Wrapper.class), eq(false))).thenReturn(null);
+
+        GeneratedReport generated = service(new AgentRuntime(8, 20_000))
+                .generateWithTrace(9L, "trace-llm-down", rules(), List.of());
+
+        assertTrue(generated.degraded());
+        assertEquals("LLM_TIMEOUT", generated.failureReason().name());
+        assertEquals("NEED_MORE_INFO", generated.report().conclusion());
+        assertTrue(generated.report().contentJson().contains("AI_DEGRADED"));
+        assertTrue(generated.report().contentJson().contains("chunkId"), "引用退化为材料证据, 不能为空");
+        assertTrue(generated.report().requiresHumanReview());
+    }
+
+    @Test
     @DisplayName("终态申请单不允许重新生成报告: 409")
     void terminalApplicationRejected() {
         givenApplication(LoanApplication.STATUS_APPROVED);
@@ -200,13 +224,17 @@ class ReportGenerationServiceTest {
 
     private ReportGenerationService service(AgentRuntime runtime) {
         return new ReportGenerationService(assembler, domainAgent, supervisor, new ReportContentBuilder(),
-                reportService, applicationService, runtime);
+                reportService, applicationService, runtime, mock(TraceRecorder.class));
     }
 
     private ApprovalReport savedReport() {
         ArgumentCaptor<ApprovalReport> captor = ArgumentCaptor.forClass(ApprovalReport.class);
         verify(reportService).save(captor.capture());
         return captor.getValue();
+    }
+
+    private static com.credit.agent.agent.domain.DomainEvidence evidence(long chunkId, String docName) {
+        return new com.credit.agent.agent.domain.DomainEvidence(chunkId, 1L, docName, 1, 1, "证据正文");
     }
 
     private void givenApplication(String status) {
