@@ -17,8 +17,14 @@ public final class RetrievalDto {
      * @param limit   召回条数, 不传默认 5, 允许 1-50
      * @param docId   限定文档, 不传表示不限
      * @param docType 限定材料类型(如 POLICY_DOC), 优先级高于 docId; 制度检索必须传
+     * @param mode    检索模式: VECTOR / BM25 / HYBRID, 不传默认 HYBRID
      */
-    public record SearchRequest(String query, Integer limit, Long docId, String docType) {
+    public record SearchRequest(String query, Integer limit, Long docId, String docType, String mode) {
+
+        /** 兼容旧调用: 不传 mode 时按默认(HYBRID)处理。 */
+        public SearchRequest(String query, Integer limit, Long docId, String docType) {
+            this(query, limit, docId, docType, null);
+        }
     }
 
     /** 命中结果, citation 已按 PRD 格式拼好, 前端与报告可直接使用。 */

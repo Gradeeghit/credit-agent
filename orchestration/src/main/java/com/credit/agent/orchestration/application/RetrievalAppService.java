@@ -3,16 +3,19 @@ package com.credit.agent.orchestration.application;
 import com.credit.agent.orchestration.application.dto.RetrievalDto;
 import com.credit.agent.orchestration.application.exception.BizException;
 import com.credit.agent.rag.retrieval.Citation;
+import com.credit.agent.rag.retrieval.HybridRetriever;
 import com.credit.agent.rag.retrieval.RetrievedChunk;
-import com.credit.agent.rag.retrieval.VectorRetriever;
+import com.credit.agent.rag.retrieval.SearchMode;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 
 /**
- * 制度检索应用服务(C2)。
- * 业务含义: 把问题变成向量并召回制度条款, 供 E3 searchPolicy 与调试使用;
- * 本类不调用 LLM, 只做参数校验与引用渲染, 避免检索链路上出现不可复现的输出。
+ * 制度检索应用服务(C2/C3)。
+ * 业务含义: 按 VECTOR / BM25 / HYBRID 三种模式召回制度条款, 供 E3 searchPolicy 与调试使用;
+ * 本类不调用 LLM, 只做参数校验、模式解析与引用渲染, 避免检索链路上出现不可复现的输出。
+ * <p>
+ * 注意: HYBRID 模式下返回的 score 是 RRF 融合分, 只用于排序, 与余弦相似度不可比。
  */
 @Service
 public class RetrievalAppService {
@@ -22,15 +25,16 @@ public class RetrievalAppService {
 
     private static final int DEFAULT_LIMIT = 5;
 
-    private final VectorRetriever vectorRetriever;
+    private final HybridRetriever hybridRetriever;
 
-    public RetrievalAppService(VectorRetriever vectorRetriever) {
-        this.vectorRetriever = vectorRetriever;
+    public RetrievalAppService(HybridRetriever hybridRetriever) {
+        this.hybridRetriever = hybridRetriever;
     }
 
     /**
      * 按问题检索切片, 返回带引用的命中列表。
-     * 业务含义: 空问题不发起 embedding 调用(避免无意义计费与空 SQL 全表扫描)。
+     * 业务含义: 空问题不发起 embedding 调用(避免无意义计费与空 SQL 全表扫描);
+     * 模式非法必须报错, 否则评测时会把"拼错的模式"误当成"融合没有提升"。
      */
     public List<RetrievalDto.Hit> search(RetrievalDto.SearchRequest req) {
         if (req == null || req.query() == null || req.query().isBlank()) {
@@ -40,11 +44,20 @@ public class RetrievalAppService {
         if (limit < 1 || limit > MAX_LIMIT) {
             throw BizException.badRequest("LIMIT_OUT_OF_RANGE", "召回条数必须在 1-" + MAX_LIMIT + " 之间");
         }
+        SearchMode mode;
+        try {
+            mode = SearchMode.from(req.mode());
+        } catch (IllegalArgumentException e) {
+            throw BizException.badRequest("MODE_INVALID", e.getMessage());
+        }
         // docType 优先: 制度检索必须收口到 policy 文档, 不能全库捞客户材料
-        List<RetrievedChunk> chunks = (req.docType() == null || req.docType().isBlank())
-                ? vectorRetriever.search(req.query().trim(), limit, req.docId())
-                : vectorRetriever.searchByDocType(req.query().trim(), limit, req.docType().trim());
+        List<RetrievedChunk> chunks = hybridRetriever.search(req.query().trim(), limit,
+                blankToNull(req.docType()), req.docId(), mode);
         return chunks.stream().map(RetrievalAppService::toHit).toList();
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private static RetrievalDto.Hit toHit(RetrievedChunk chunk) {
