@@ -20,15 +20,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 业务含义: 这是决定"制度域要不要切 HYBRID"的对照基线 —— 向量档与 RRF 档必须跑同一份标注才有可比性;
  * 本用例只跑 BM25(不调模型、不花钱), 阈值是回归护栏而非目标值。
  * <p>
- * 2026-11-02 实测: Recall@3 = 0.9600 (48/50), MRR = 0.9600;
- * 未命中 Q11「能不能贷五年」(语料无"五年"字样, 纯语义)、Q18「晚还一天会有什么后果」。
+ * 2026-11-02 实测(65 条: 31 字面 + 34 改写): Recall@3 = 0.9231 (60/65), MRR = 0.8872;
+ * 分档: 字面 1.0000(31/31) / 改写 0.8529(29/34) —— 差距就是向量路要补的空间。
+ * 未命中 5 条: Q11 能不能贷五年、Q18 晚还一天会有什么后果、Q58 找谁反映、Q62 能借多少、Q65 给个说法
+ * (共同点: 问法里没有条款原文的任何一个术语)。
  */
 class C5Bm25BaselineTest {
 
     private static final int TOP_K = 3;
 
-    /** 回归护栏: 实测 0.96, 留 6 个点余量; 跌破说明 BM25 或语料被改坏了。 */
-    private static final double MIN_RECALL = 0.90;
+    /** 回归护栏: 实测 0.9231, 留 4 个点余量; 跌破说明 BM25 或语料被改坏了。 */
+    private static final double MIN_RECALL = 0.88;
 
     @Test
     @DisplayName("评测集自检: 50 条 query、30 段语料, 每条 gold 都能在语料里找到")
@@ -36,7 +38,7 @@ class C5Bm25BaselineTest {
         C5Dataset dataset = C5Dataset.load();
 
         assertEquals(30, dataset.chunks().size());
-        assertEquals(50, dataset.queries().size());
+        assertEquals(65, dataset.queries().size());
         Set<Long> corpusIds = dataset.chunks().stream().map(EvalChunk::chunkId).collect(Collectors.toSet());
         for (EvalQuery query : dataset.queries()) {
             assertTrue(corpusIds.containsAll(query.gold()),

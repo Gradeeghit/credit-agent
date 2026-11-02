@@ -1,7 +1,7 @@
 {
   "name": "c5-queries",
   "k": 3,
-  "note": "50 条标注 query; gold 为 c5-corpus.json 的 chunkId; tag: literal=字面重合, paraphrase=同义改写(考察语义召回)",
+  "note": "65 条标注 query(31 字面 + 34 改写); gold 为 c5-corpus.json 的 chunkId; tag: literal=字面重合, paraphrase=同义改写(考察语义召回)",
   "queries": [
     {"id": "Q01", "query": "本办法适用哪些贷款业务", "gold": [1], "tag": "literal"},
     {"id": "Q02", "query": "借款人年龄要求 18周岁 60周岁", "gold": [2], "tag": "literal"},
@@ -52,6 +52,21 @@
     {"id": "Q47", "query": "客户身份资料 交易记录 保存5年", "gold": [27], "tag": "literal"},
     {"id": "Q48", "query": "投诉 15个工作日 办结答复", "gold": [28], "tag": "literal"},
     {"id": "Q49", "query": "一次性手续费 费率 0.5%", "gold": [29], "tag": "literal"},
-    {"id": "Q50", "query": "本办法什么时候施行 谁负责解释", "gold": [30], "tag": "literal"}
+    {"id": "Q50", "query": "本办法什么时候施行 谁负责解释", "gold": [30], "tag": "literal"},
+    {"id": "Q51", "query": "这个办法管的是哪一类贷款", "gold": [1], "tag": "paraphrase"},
+    {"id": "Q52", "query": "每个月几号还钱 怎么还", "gold": [8], "tag": "paraphrase"},
+    {"id": "Q53", "query": "放完款之后还会定期查吗", "gold": [21], "tag": "paraphrase"},
+    {"id": "Q54", "query": "流水里那种进来马上就转走的钱算正常吗", "gold": [18], "tag": "paraphrase"},
+    {"id": "Q55", "query": "发现有人冒用身份或者涉赌怎么办", "gold": [25], "tag": "paraphrase"},
+    {"id": "Q56", "query": "大额的钱是打给客户还是直接付给商家", "gold": [26], "tag": "paraphrase"},
+    {"id": "Q57", "query": "我的资料你们要留多久", "gold": [27], "tag": "paraphrase"},
+    {"id": "Q58", "query": "对处理结果不满意该找谁反映", "gold": [28], "tag": "paraphrase"},
+    {"id": "Q59", "query": "除了利息还要交什么钱", "gold": [29], "tag": "paraphrase"},
+    {"id": "Q60", "query": "这个规定从哪天开始算数", "gold": [30], "tag": "paraphrase"},
+    {"id": "Q61", "query": "没有固定工作只有社保记录能证明收入吗", "gold": [3], "tag": "paraphrase"},
+    {"id": "Q62", "query": "一个月工资两万 最多能借多少", "gold": [4], "tag": "paraphrase"},
+    {"id": "Q63", "query": "在别家还有贷款会不会影响我这边能借多少", "gold": [5], "tag": "paraphrase"},
+    {"id": "Q64", "query": "你们看流水主要看哪些方面", "gold": [17], "tag": "paraphrase"},
+    {"id": "Q65", "query": "被拒了以后能不能给个说法", "gold": [24], "tag": "paraphrase"}
   ]
 }
