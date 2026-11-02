@@ -19,14 +19,26 @@ public record C5Dataset(List<EvalChunk> chunks, List<EvalQuery> queries) {
     private static final String CORPUS = "/eval/c5-corpus.json";
     private static final String QUERIES = "/eval/c5-queries.json";
 
+    /** 真实条文语料: 《个人贷款管理办法》(2024年第3号), 一条一片, 共 52 片 */
+    private static final String REAL_CORPUS = "/eval/c5-real-corpus.json";
+    private static final String REAL_QUERIES = "/eval/c5-real-queries.json";
+
     public C5Dataset {
         chunks = chunks == null ? List.of() : List.copyOf(chunks);
         queries = queries == null ? List.of() : List.copyOf(queries);
     }
 
-    /** 加载默认评测集(c5-corpus.json + c5-queries.json)。 */
+    /** 加载默认评测集(c5-corpus.json + c5-queries.json, 30 段虚构语料)。 */
     public static C5Dataset load() {
         return load(CORPUS, QUERIES);
+    }
+
+    /**
+     * 加载真实条文评测集(《个人贷款管理办法》52 条 + 30 条标注)。
+     * 业务含义: 虚构语料措辞规整、术语集中, 真实条文更接近线上检索场景, 用它复核结论是否仍然成立。
+     */
+    public static C5Dataset loadReal() {
+        return load(REAL_CORPUS, REAL_QUERIES);
     }
 
     /** 加载指定资源, 便于做小语料的自测。 */

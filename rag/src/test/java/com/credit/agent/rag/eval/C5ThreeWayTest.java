@@ -22,13 +22,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * C5 三档对比: VECTOR / BM25 / HYBRID(RRF k=60) 跑同一份 65 条标注。
+ * C5 三档对比: VECTOR / BM25 / HYBRID(RRF k=60) 跑同一份标注。
  * 业务含义: "制度域要不要从 VECTOR 切 HYBRID"必须由这份对比决定, 不凭感觉。
  * <p>
- * 该用例会**真实调用 embedding 接口**(花钱、要网络), 因此打 {@code @Tag("live")}:
- * 父 POM 的 surefire 默认 {@code excludedGroups=live}, 平时 {@code mvn test} 不跑它;
- * 需要时 {@code mvn test -pl rag -am -Dgroups=live -Dtest=C5ThreeWayTest}。
- * 缺 Key 时自动跳过(assumeTrue), 不会把构建搞红。
+ * 跑两份语料: ① 虚构 30 段 + 65 条 query(措辞规整); ② **真实条文** 2 份办法共 114 片 + 62 条 query
+ * (《个人贷款管理办法》52 条 + 《固定资产贷款管理办法》62 条)。
+ * 真实语料上 BM25 只有 0.6935(改写档 0.4194), 才能看出向量到底补了多少。
+ * <p>
+ * 会**真实调用 embedding 接口**(花钱、要网络), 故打 {@code @Tag("live")}: 默认 {@code mvn test} 不跑;
+ * 需要时 {@code mvn test -pl rag -am -Dtest=C5ThreeWayTest -Dsurefire.excludedGroups=noop}。
  */
 @Tag("live")
 class C5ThreeWayTest {
@@ -42,25 +44,32 @@ class C5ThreeWayTest {
     private static final String DEFAULT_MODEL = "qwen3.7-text-embedding-flash";
 
     @Test
-    @DisplayName("三档对比: VECTOR / BM25 / HYBRID 的 Recall@3、MRR 与分档差距")
+    @DisplayName("三档对比: 虚构语料与真实条文语料各跑一遍 VECTOR / BM25 / HYBRID")
     void comparesThreeRetrievers() {
         String apiKey = firstNonBlank(System.getenv("EMBEDDING_API_KEY"), System.getenv("OPENAI_API_KEY"));
         assumeTrue(apiKey != null, "缺少 EMBEDDING_API_KEY/OPENAI_API_KEY, 跳过 live 评测");
         String baseUrl = firstNonBlank(System.getenv("EMBEDDING_BASE_URL"), System.getenv("OPENAI_BASE_URL"),
                 DEFAULT_BASE_URL);
         String model = firstNonBlank(System.getenv("EMBEDDING_MODEL"), DEFAULT_MODEL);
-
-        C5Dataset dataset = C5Dataset.load();
-        JiebaTokenizer tokenizer = new JiebaTokenizer();
         C5EmbeddingClient client = new C5EmbeddingClient(baseUrl, apiKey, model);
 
+        EvalReport fictional = run("虚构语料(30 段 / 65 条)", C5Dataset.load(), client);
+        EvalReport real = run("真实条文(2 份办法 114 片 / 62 条 query)", C5Dataset.loadReal(), client);
+
+        assertTrue(fictional.recallAtK() > 0.0, "虚构语料向量档 0 命中, 检查 Key/模型/维度");
+        assertTrue(real.recallAtK() > 0.0, "真实语料向量档 0 命中, 检查 Key/模型/维度");
+    }
+
+    /** 对一份评测集跑三档并打印; 返回 VECTOR 档报告(调用方用于断言)。 */
+    private static EvalReport run(String title, C5Dataset dataset, C5EmbeddingClient client) {
+        JiebaTokenizer tokenizer = new JiebaTokenizer();
         List<double[]> chunkVectors = client.embed(dataset.chunks().stream()
                 .map(chunk -> chunk.section() + " " + chunk.content()).toList());
-        Map<String, double[]> queryVectors = new HashMap<>();
         List<String> queryTexts = dataset.queries().stream().map(EvalQuery::query).toList();
-        List<double[]> vectors = client.embed(queryTexts);
+        List<double[]> queryVectorList = client.embed(queryTexts);
+        Map<String, double[]> queryVectors = new HashMap<>();
         for (int i = 0; i < queryTexts.size(); i++) {
-            queryVectors.put(queryTexts.get(i), vectors.get(i));
+            queryVectors.put(queryTexts.get(i), queryVectorList.get(i));
         }
 
         Bm25Index index = Bm25Index.build(dataset.chunks().stream()
@@ -80,17 +89,15 @@ class C5ThreeWayTest {
         EvalReport bm25Report = RecallEvaluator.evaluate("BM25", dataset.queries(), bm25, TOP_K);
         EvalReport hybridReport = RecallEvaluator.evaluate("HYBRID", dataset.queries(), hybrid, TOP_K);
 
-        System.out.println("===== C5 三档对比 (65 条: 31 字面 / 34 改写) =====");
+        System.out.println("===== C5 三档对比 | " + title + " =====");
         print(vectorReport, dataset);
         print(bm25Report, dataset);
         print(hybridReport, dataset);
-
         assertEquals(dataset.queries().size(), vectorReport.total());
-        assertTrue(vectorReport.recallAtK() > 0.0, "向量档 0 命中, 检查 Key/模型/维度是否匹配");
-        assertTrue(hybridReport.recallAtK() > 0.0, "融合档 0 命中, 检查 RRF 输入是否为空");
+        return vectorReport;
     }
 
-    /** 打印总体 + 分档; 分档直接用同一份报告里的命中结果重算, 不再调模型。 */
+    /** 打印总体 + 分档 + 该档未命中明细。 */
     private static void print(EvalReport report, C5Dataset dataset) {
         EvalReport literal = rescore(report, dataset, false);
         EvalReport paraphrase = rescore(report, dataset, true);
