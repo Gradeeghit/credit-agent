@@ -39,6 +39,9 @@ credit-agent:
     # 制度域强制先取证: 下发 tool_choice=required(该域只挂 searchPolicy, 等价于必须先调它)。
     # 端点不支持 tool_choice 时置 false, 整体退回"模型自主决定是否调工具"。
     force-tool-enabled: ${FORCE_TOOL_ENABLED:false}
+    # 一次 ask 内最多几轮模型调用(含最终作答轮), 防止工具循环失控。
+    # 每轮都是供应商侧一次独立计费, 都会单独落一条 ai_call_log(round_no 递增)。
+    max-tool-rounds: ${MAX_TOOL_ROUNDS:4}
   security:
     # 开发阶段身份由前端直传 X-User-Id / X-User-Role, 尚未接入 Spring Security(I2/I3)
     # true  = 缺少身份头直接 401(默认, 安全优先)
@@ -50,6 +53,9 @@ credit-agent:
     price:
       prompt-per-k: '${AI_PRICE_PROMPT_PER_K:1}'
       completion-per-k: '${AI_PRICE_COMPLETION_PER_K:2}'
+      # embedding 单价(元/千 token): 百炼 qwen3.7-text-embedding-flash 官方价 0.000125
+      # 留空则 embedding 调用的 cost 为 NULL(不瞎估)
+      embedding-per-k: '${AI_PRICE_EMBEDDING_PER_K:0.000125}'
     # B5 向量化: 独立于 chat 的连接参数, 由 EmbeddingModelConfig 单独构造 Bean
     embedding:
       # 总开关: false 时切片只落库不向量化, 检索退化为纯 BM25

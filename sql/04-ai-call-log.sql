@@ -10,6 +10,7 @@ SET client_encoding = 'UTF8';
 CREATE TABLE IF NOT EXISTS ai_call_log (
     id                BIGSERIAL PRIMARY KEY,
     trace_id          VARCHAR(64),                  -- 与 approval_trace.trace_id 关联; 允许为空(如离线条目)
+    kind              VARCHAR(16)   NOT NULL DEFAULT 'CHAT',  -- CHAT / EMBEDDING: 两类单价不同, 混用会算错账
     model             VARCHAR(64)   NOT NULL,        -- 模型标识, 取不到时写 unknown
     prompt_tokens     BIGINT        NOT NULL DEFAULT 0,
     completion_tokens BIGINT        NOT NULL DEFAULT 0,
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS ai_call_log (
     latency_ms        BIGINT        NOT NULL DEFAULT 0,
     created_at        TIMESTAMP     NOT NULL DEFAULT now(),
     CONSTRAINT ck_ai_call_tokens CHECK (prompt_tokens >= 0 AND completion_tokens >= 0),
+    CONSTRAINT ck_ai_call_kind CHECK (kind IN ('CHAT', 'EMBEDDING')),
     CONSTRAINT ck_ai_call_cost CHECK (cost IS NULL OR cost >= 0)
 );
 
@@ -38,3 +40,7 @@ COMMENT ON COLUMN ai_call_log.cost IS '金额由 domain 的 TokenCost 按单价�
 -- SELECT trace_id, count(*) AS calls, sum(prompt_tokens + completion_tokens) AS tokens,
 --        sum(cost) AS total_cost
 --   FROM ai_call_log WHERE trace_id IS NOT NULL GROUP BY trace_id ORDER BY 2 DESC LIMIT 10;
+
+ALTER TABLE ai_call_log ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'CHAT';
+ALTER TABLE ai_call_log DROP CONSTRAINT IF EXISTS ck_ai_call_kind;
+ALTER TABLE ai_call_log ADD CONSTRAINT ck_ai_call_kind CHECK (kind IN ('CHAT', 'EMBEDDING'));

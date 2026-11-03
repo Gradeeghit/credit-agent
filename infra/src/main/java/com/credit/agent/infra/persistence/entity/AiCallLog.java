@@ -25,6 +25,9 @@ public class AiCallLog {
     /** 全链路追踪 ID, 与 approval_trace.trace_id 关联 */
     private String traceId;
 
+    /** 调用类型: CHAT / EMBEDDING, 决定用哪组单价计价 */
+    private String kind;
+
     /** 模型标识, 取不到时写 unknown */
     private String model;
 
@@ -39,6 +42,9 @@ public class AiCallLog {
 
     /** 调用耗时(毫秒) */
     private Long latencyMs;
+
+    /** 工具循环内的轮次, 从 1 起; 一次 ask 可能对应多条(每轮都计费), 只记最后一轮会低报成本 */
+    private Integer roundNo;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

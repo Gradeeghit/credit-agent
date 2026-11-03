@@ -31,4 +31,19 @@ class TokenCostTest {
         assertThrows(IllegalArgumentException.class, () -> TokenCost.cost(1, 1,
                 new BigDecimal("2.00"), new BigDecimal("-1")));
     }
+
+    @Test
+    @DisplayName("embedding 只有输入 token: 10000 token × 0.000125 元/千 = 0.001250")
+    void embeddingCostUsesInputOnly() {
+        assertEquals(new BigDecimal("0.001250"),
+                TokenCost.embeddingCost(10000, new BigDecimal("0.000125")));
+    }
+
+    @Test
+    @DisplayName("embedding 的负 token 与空单价直接拒绝")
+    void embeddingEdgeCases() {
+        assertThrows(IllegalArgumentException.class,
+                () -> TokenCost.embeddingCost(-1, new BigDecimal("0.000125")));
+        assertThrows(IllegalArgumentException.class, () -> TokenCost.embeddingCost(1, null));
+    }
 }

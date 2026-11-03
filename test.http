@@ -147,7 +147,8 @@ Content-Type: application/json
 
 {
   "query": "逾期几次算不良",
-  "limit": 5
+  "limit": 5,
+  "mode": "HYBRID"
 }
 
 > {%
@@ -176,6 +177,54 @@ Content-Type: application/json
   "limit": 3,
   "docId": 1
 }
+
+### 7.1) 三种模式对比: 同一个 query 分别跑 VECTOR / BM25 / HYBRID
+### 注意: HYBRID 返回的 score 是 RRF 融合分(约 0.0x), 与余弦相似度不可比, 只看顺序
+
+### 7.1.1) 纯向量(语义相近)
+POST http://localhost:8080/api/rag/search
+Content-Type: application/json
+
+{
+  "query": "逾期几次算不良",
+  "limit": 5,
+  "docType": "POLICY_DOC",
+  "mode": "VECTOR"
+}
+
+### 7.1.2) 纯词面(BM25, 不需要 embedding Key)
+POST http://localhost:8080/api/rag/search
+Content-Type: application/json
+
+{
+  "query": "逾期几次算不良",
+  "limit": 5,
+  "docType": "POLICY_DOC",
+  "mode": "BM25"
+}
+
+### 7.1.3) 融合(默认; 不传 mode 也是这个行为)
+POST http://localhost:8080/api/rag/search
+Content-Type: application/json
+
+{
+  "query": "逾期几次算不良",
+  "limit": 5,
+  "docType": "POLICY_DOC",
+  "mode": "HYBRID"
+}
+
+> {%
+  client.test("融合结果非空", () => {
+    client.assert(response.body.data.length > 0,
+      "命中数: " + response.body.data.length + ", 先上传政策 PDF 并确认已向量化");
+  });
+  client.test("每条都带引用", () => {
+    response.body.data.forEach((hit, i) => {
+      client.assert(/^\[.+\]$/.test(hit.citation), "第 " + i + " 条: " + hit.citation);
+    });
+  });
+%}
 
 ### 8) 重新向量化(补偿入口, 幂等: 只处理 embedding IS NULL 的当前切片)
 POST http://localhost:8080/api/documents/1/reindex
