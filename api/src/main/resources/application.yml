@@ -68,6 +68,22 @@ credit-agent:
       dimensions: ${EMBEDDING_DIMENSIONS:1024}
       # 百炼单批上限 20 行, 超过会被服务端拒绝
       batch-size: ${EMBEDDING_BATCH_SIZE:20}
+  # C 模块检索参数
+  retrieval:
+    # RRF 平滑常数(PRD C3)
+    rrf-k: ${RETRIEVAL_RRF_K:60}
+    # 融合/重排前的候选数: 开重排时会先宽召回这么多条, 再精排出前 limit 条
+    candidate-limit: ${RETRIEVAL_CANDIDATE_LIMIT:20}
+    # C4 LLM 重排。默认关闭 —— PRD 要求"若 Recall@3 相对 C3 下降则默认关闭并记录数据",
+    # 目前还没在 C5 评测集上跑出 rerank 档, 先关; 评测确认提升后再开。
+    rerank:
+      enabled: ${RERANK_ENABLED:true}
+      # 重排用的便宜模型; 留空则复用 spring.ai.openai.chat.options.model
+      model: '${RERANK_MODEL:qwen3.7-text-rerank}'
+      # 单次最多给多少条打分(PRD C4: 仅对 top20 打分, 不是全量重排)
+      max-candidates: ${RERANK_MAX_CANDIDATES:20}
+      # 单条片段进 prompt 的截断长度, 防止一次重排吃掉几千 token
+      content-limit: ${RERANK_CONTENT_LIMIT:200}
 
 # MyBatis-Plus
 mybatis-plus:

@@ -14,9 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -30,7 +32,7 @@ class RetrievalAppServiceTest {
     @DisplayName("命中项自动带 [文档名 p.起-止] 引用, 跨页与单页格式都正确")
     void shouldRenderCitation() {
         when(hybridRetriever.search(eq("逾期几次算不良"), anyInt(), isNull(), isNull(),
-                any(SearchMode.class))).thenReturn(List.of(
+                any(SearchMode.class), eq(false))).thenReturn(List.of(
                 new RetrievedChunk(11L, 6L, "2024年报.pdf", "第一章 总则", "正文", 12, 13, 0.87)));
 
         List<RetrievalDto.Hit> hits = service.search(
@@ -78,5 +80,22 @@ class RetrievalAppServiceTest {
         assertEquals(400, ex.getStatus());
         assertEquals("MODE_INVALID", ex.getCode());
         verifyNoInteractions(hybridRetriever);
+    }
+
+    @Test
+    @DisplayName("rerank 显式 true 才透传; 不传按 false(不为默认行为多付一次模型调用)")
+    void rerankFlagPassedThrough() {
+        when(hybridRetriever.search(anyString(), anyInt(), isNull(), isNull(),
+                any(SearchMode.class), eq(true))).thenReturn(List.of());
+        when(hybridRetriever.search(anyString(), anyInt(), isNull(), isNull(),
+                any(SearchMode.class), eq(false))).thenReturn(List.of());
+
+        service.search(new RetrievalDto.SearchRequest("额度", 5, null, null, null, true));
+        verify(hybridRetriever).search(anyString(), anyInt(), isNull(), isNull(),
+                any(SearchMode.class), eq(true));
+
+        service.search(new RetrievalDto.SearchRequest("额度", 5, null, null, null, null));
+        verify(hybridRetriever).search(anyString(), anyInt(), isNull(), isNull(),
+                any(SearchMode.class), eq(false));
     }
 }

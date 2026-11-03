@@ -51,8 +51,9 @@ public class RetrievalAppService {
             throw BizException.badRequest("MODE_INVALID", e.getMessage());
         }
         // docType 优先: 制度检索必须收口到 policy 文档, 不能全库捞客户材料
+        // rerank 未传(false/null) 时不做 C4 重排; 传 true 才付那次模型调用, 由全局开关兜底
         List<RetrievedChunk> chunks = hybridRetriever.search(req.query().trim(), limit,
-                blankToNull(req.docType()), req.docId(), mode);
+                blankToNull(req.docType()), req.docId(), mode, Boolean.TRUE.equals(req.rerank()));
         return chunks.stream().map(RetrievalAppService::toHit).toList();
     }
 

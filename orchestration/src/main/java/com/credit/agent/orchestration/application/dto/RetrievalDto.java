@@ -18,12 +18,19 @@ public final class RetrievalDto {
      * @param docId   限定文档, 不传表示不限
      * @param docType 限定材料类型(如 POLICY_DOC), 优先级高于 docId; 制度检索必须传
      * @param mode    检索模式: VECTOR / BM25 / HYBRID, 不传默认 HYBRID
+     * @param rerank  是否对召回结果做 LLM 重排(C4); 不传按全局开关
+     *                {@code credit-agent.retrieval.rerank.enabled}(默认关闭)处理
      */
-    public record SearchRequest(String query, Integer limit, Long docId, String docType, String mode) {
+    public record SearchRequest(String query, Integer limit, Long docId, String docType, String mode, Boolean rerank) {
 
-        /** 兼容旧调用: 不传 mode 时按默认(HYBRID)处理。 */
+        /** 兼容旧调用: 不传 mode 与 rerank 时按默认处理。 */
         public SearchRequest(String query, Integer limit, Long docId, String docType) {
-            this(query, limit, docId, docType, null);
+            this(query, limit, docId, docType, null, null);
+        }
+
+        /** 兼容 C3 调用: 只指定模式。 */
+        public SearchRequest(String query, Integer limit, Long docId, String docType, String mode) {
+            this(query, limit, docId, docType, mode, null);
         }
     }
 

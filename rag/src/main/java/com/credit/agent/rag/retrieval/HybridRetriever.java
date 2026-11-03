@@ -1,8 +1,10 @@
 package com.credit.agent.rag.retrieval;
 
 import com.credit.agent.rag.retrieval.bm25.Bm25Retriever;
+import com.credit.agent.rag.retrieval.rerank.Reranker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -34,20 +36,31 @@ public class HybridRetriever {
 
     private final VectorRetriever vectorRetriever;
     private final Bm25Retriever bm25Retriever;
+    private final Reranker reranker;
     private final int rrfK;
     private final int candidateLimit;
 
+    /** 单测用: 不接重排(重排为 null 时 rerank 请求自动退化)。 */
     public HybridRetriever(VectorRetriever vectorRetriever, Bm25Retriever bm25Retriever,
+                           @Value("${credit-agent.retrieval.rrf-k:60}") int rrfK,
+                           @Value("${credit-agent.retrieval.candidate-limit:20}") int candidateLimit) {
+        this(vectorRetriever, bm25Retriever, null, rrfK, candidateLimit);
+    }
+
+    /** 容器用: 有 {@link Reranker} 才能提供 C4 重排; 没有时该能力自动关闭。 */
+    @Autowired
+    public HybridRetriever(VectorRetriever vectorRetriever, Bm25Retriever bm25Retriever, Reranker reranker,
                            @Value("${credit-agent.retrieval.rrf-k:60}") int rrfK,
                            @Value("${credit-agent.retrieval.candidate-limit:20}") int candidateLimit) {
         this.vectorRetriever = vectorRetriever;
         this.bm25Retriever = bm25Retriever;
+        this.reranker = reranker;
         this.rrfK = rrfK;
         this.candidateLimit = candidateLimit;
     }
 
     /**
-     * 按指定模式召回切片。
+     * 按指定模式召回切片(不重排)。
      *
      * @param query   问题或关键词
      * @param limit   返回条数
@@ -56,12 +69,31 @@ public class HybridRetriever {
      * @param mode    检索模式, 为空按 HYBRID
      */
     public List<RetrievedChunk> search(String query, int limit, String docType, Long docId, SearchMode mode) {
+        return search(query, limit, docType, docId, mode, false);
+    }
+
+    /**
+     * 按指定模式召回, 可选 LLM 重排(C4)。
+     * 业务含义: 重排需要"先宽召回再精排", 所以开启时召回数放大到 candidate-limit,
+     * 由 {@link Reranker} 按语义相关性重排后只返回前 limit 条;
+     * 没有可用的 Reranker 或重排失败时, 行为与不重排完全一致(降级不影响可用性)。
+     *
+     * @param rerank 是否对召回结果重排
+     */
+    public List<RetrievedChunk> search(String query, int limit, String docType, Long docId, SearchMode mode,
+                                       boolean rerank) {
         SearchMode effective = mode == null ? SearchMode.HYBRID : mode;
-        return switch (effective) {
-            case VECTOR -> vectorSearch(query, limit, docType, docId);
-            case BM25 -> bm25Retriever.search(query, limit, docType, docId);
-            case HYBRID -> hybrid(query, limit, docType, docId);
+        boolean needRerank = rerank && reranker != null;
+        int recall = needRerank ? Math.max(candidateLimit, limit) : limit;
+        List<RetrievedChunk> hits = switch (effective) {
+            case VECTOR -> vectorSearch(query, recall, docType, docId);
+            case BM25 -> bm25Retriever.search(query, recall, docType, docId);
+            case HYBRID -> hybrid(query, recall, docType, docId);
         };
+        if (!needRerank) {
+            return hits;
+        }
+        return reranker.rerank(query, hits, limit);
     }
 
     private List<RetrievedChunk> hybrid(String query, int limit, String docType, Long docId) {
