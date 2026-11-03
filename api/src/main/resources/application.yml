@@ -89,12 +89,12 @@ logging:
     level: "%5p [%X{traceId:-}]"
   level:
     com.credit.agent.infra.persistence.mapper: debug
-    # ---- Spring AI 模型请求/响应日志 ----
-    # SimpleLoggerAdvisor 与 DefaultToolCallingManager 内部都只调 logger.debug(...),
-    # root 为 INFO 时加 advisor 也不会输出任何内容。
+    # ---- 模型请求/响应日志(逐轮) ----
+    # 网关自驱动工具循环, 每轮打 LLM_REQ / LLM_RES 两条 debug 日志(带 round 号, 单段截断 2000 字)。
+    # 注意: SimpleLoggerAdvisor 已随 ChatClient 一起移除, 不要再配它的 logger(配了也不会触发)。
     # 默认 info(静默): prompt 里含客户姓名/证件号/流水明细, 属敏感数据, 不默认开。
     # 联调时临时打开: 设环境变量 AI_LOG_LEVEL=debug
-    org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor: '${AI_LOG_LEVEL:debug}'
+    com.credit.agent.agent.llm.SpringAiLlmGateway: '${AI_LOG_LEVEL:debug}'
     org.springframework.ai.model.tool.DefaultToolCallingManager: '${AI_LOG_LEVEL:debug}'
 
 

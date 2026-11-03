@@ -84,11 +84,13 @@ public class SpringAiLlmGateway implements LlmGateway {
 
         for (int round = 1; round <= maxToolRounds; round++) {
             Prompt prompt = new Prompt(messages, optionsFor(request, callbacks, round));
+            logRequest(request, round, callbacks);
             long startNanos = System.nanoTime();
             ChatResponse response = callModel(prompt);
             long latencyMs = (System.nanoTime() - startNanos) / 1_000_000L;
 
             LlmAnswer roundAnswer = LlmResponses.toAnswer(response);
+            logResponse(request, round, response, roundAnswer);
             promptTokens += roundAnswer.promptTokens();
             completionTokens += roundAnswer.completionTokens();
 
@@ -144,7 +146,7 @@ public class SpringAiLlmGateway implements LlmGateway {
      */
     private List<Message> executeTools(Prompt prompt, ChatResponse response) {
         ToolExecutionResult result = toolCallingManager.executeToolCalls(prompt, response);
-        List<Message> history = result == null ? null : result.conversationHistory();
+        List<Message> history = result.conversationHistory();
         if (history == null || history.isEmpty()) {
             throw new LlmCallException("工具执行后对话历史为空");
         }
@@ -181,5 +183,56 @@ public class SpringAiLlmGateway implements LlmGateway {
             return toolSet.callbacks() == null ? new ToolCallback[0] : toolSet.callbacks();
         }
         return toolSet.subset(request.toolNames().toArray(new String[0])).callbacks();
+    }
+
+    // ================= 逐轮日志(替代已移除的 SimpleLoggerAdvisor) =================
+    //
+    // SimpleLoggerAdvisor 挂在 ChatClient 的 Advisor 链上, 本类改为直连 ChatModel 后不再经过它;
+    // 但换来的是"能看到每一轮"——自驱动循环天然知道轮次, 比 advisor 只看到最外层一次更准确。
+    // 默认不输出(级别 info): prompt 里含客户姓名/证件号/流水明细, 属敏感数据;
+    // 联调时设 AI_LOG_LEVEL=debug 打开。
+
+    /** 单段文本的日志上限, 防止整份流水把日志刷爆。 */
+    private static final int LOG_TEXT_LIMIT = 2000;
+
+    private static void logRequest(LlmRequest request, int round, ToolCallback[] callbacks) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        log.debug("LLM_REQ trace_id={} round={} tools=[{}] system={} user={}",
+                request.traceId(), round, toolNamesOf(callbacks),
+                truncate(request.systemPrompt()), truncate(request.userPrompt()));
+    }
+
+    private static void logResponse(LlmRequest request, int round, ChatResponse response, LlmAnswer answer) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        log.debug("LLM_RES trace_id={} round={} toolCalls={} tokens={}/{} text={}",
+                request.traceId(), round, response.hasToolCalls(),
+                answer.promptTokens(), answer.completionTokens(), truncate(answer.text()));
+    }
+
+    private static String toolNamesOf(ToolCallback[] callbacks) {
+        if (callbacks == null || callbacks.length == 0) {
+            return "none";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (ToolCallback callback : callbacks) {
+            if (sb.length() > 0) {
+                sb.append(',');
+            }
+            sb.append(callback.getToolDefinition().name());
+        }
+        return sb.toString();
+    }
+
+    private static String truncate(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text.length() <= LOG_TEXT_LIMIT
+                ? text
+                : text.substring(0, LOG_TEXT_LIMIT) + "...(截断, 共 " + text.length() + " 字)";
     }
 }
