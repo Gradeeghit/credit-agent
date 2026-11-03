@@ -17,6 +17,7 @@ import java.math.BigDecimal;
  * 落库版 LLM 调用记录器(H3)。
  * 业务含义: 成本要能按 trace_id 聚合出"这一笔花了多少钱、调了几次", 所以每次调用必须落 ai_call_log;
  * cost 由 domain 的 {@link TokenCost} 按单价确定性算出, 单价未配置时 cost 为 null(绝不瞎估)。
+ * 区分 chat 与 embedding: 两者单价不同, embedding 只有输入 token, 混用同一组单价会算错账。
  * 容错: 落库失败只告警, 不影响审批主流程(成本统计丢一条可以接受, 审批中断不可接受)。
  */
 @Component
@@ -28,13 +29,19 @@ public class DbAiCallLogger implements AiCallLogger {
     private final AiCallLogService aiCallLogService;
     private final BigDecimal promptPricePerK;
     private final BigDecimal completionPricePerK;
+    private final BigDecimal embeddingPricePerK;
+    private final BigDecimal rerankPricePerK;
 
     public DbAiCallLogger(AiCallLogService aiCallLogService,
                           @Value("${credit-agent.ai.price.prompt-per-k:}") String promptPricePerK,
-                          @Value("${credit-agent.ai.price.completion-per-k:}") String completionPricePerK) {
+                          @Value("${credit-agent.ai.price.completion-per-k:}") String completionPricePerK,
+                          @Value("${credit-agent.ai.price.embedding-per-k:}") String embeddingPricePerK,
+                          @Value("${credit-agent.ai.price.rerank-per-k:}") String rerankPricePerK) {
         this.aiCallLogService = aiCallLogService;
         this.promptPricePerK = parsePrice(promptPricePerK);
         this.completionPricePerK = parsePrice(completionPricePerK);
+        this.embeddingPricePerK = parsePrice(embeddingPricePerK);
+        this.rerankPricePerK = parsePrice(rerankPricePerK);
     }
 
     @Override
@@ -43,17 +50,19 @@ public class DbAiCallLogger implements AiCallLogger {
             return;
         }
         BigDecimal cost = costOf(record);
-        log.info("AI_CALL trace_id={} model={} prompt_tokens={} completion_tokens={} cost={} latency_ms={}",
-                record.traceId(), record.model(), record.promptTokens(), record.completionTokens(),
-                cost == null ? "unknown" : cost.toPlainString(), record.latencyMs());
+        log.info("AI_CALL trace_id={} kind={} model={} round={} prompt_tokens={} completion_tokens={} cost={} latency_ms={}",
+                record.traceId(), record.kind(), record.model(), record.roundNo(), record.promptTokens(),
+                record.completionTokens(), cost == null ? "unknown" : cost.toPlainString(), record.latencyMs());
         try {
             AiCallLog entity = new AiCallLog();
             entity.setTraceId(record.traceId());
+            entity.setKind(record.kind() == null ? AiCallRecord.Kind.CHAT.name() : record.kind().name());
             entity.setModel(record.model() == null ? "unknown" : record.model());
             entity.setPromptTokens(record.promptTokens());
             entity.setCompletionTokens(record.completionTokens());
             entity.setCost(cost);
             entity.setLatencyMs(record.latencyMs());
+            entity.setRoundNo(record.roundNo());
             aiCallLogService.save(entity);
         } catch (RuntimeException e) {
             log.warn("AI 调用明细落库失败, 已忽略: {}", e.getMessage());
@@ -62,6 +71,14 @@ public class DbAiCallLogger implements AiCallLogger {
 
     /** 单价未配置则成本留空, 不用 0 冒充(0 会让成本报表失真)。 */
     private BigDecimal costOf(AiCallRecord record) {
+        if (record.kind() == AiCallRecord.Kind.EMBEDDING) {
+            return embeddingPricePerK == null ? null
+                    : TokenCost.embeddingCost(record.promptTokens(), embeddingPricePerK);
+        }
+        if (record.kind() == AiCallRecord.Kind.RERANK) {
+            return rerankPricePerK == null ? null
+                    : TokenCost.rerankCost(record.promptTokens(), rerankPricePerK);
+        }
         if (promptPricePerK == null || completionPricePerK == null) {
             return null;
         }

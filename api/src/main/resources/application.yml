@@ -39,6 +39,9 @@ credit-agent:
     # 制度域强制先取证: 下发 tool_choice=required(该域只挂 searchPolicy, 等价于必须先调它)。
     # 端点不支持 tool_choice 时置 false, 整体退回"模型自主决定是否调工具"。
     force-tool-enabled: ${FORCE_TOOL_ENABLED:false}
+    # 一次 ask 内最多几轮模型调用(含最终作答轮), 防止工具循环失控。
+    # 每轮都是供应商侧一次独立计费, 都会单独落一条 ai_call_log(round_no 递增)。
+    max-tool-rounds: ${MAX_TOOL_ROUNDS:4}
   security:
     # 开发阶段身份由前端直传 X-User-Id / X-User-Role, 尚未接入 Spring Security(I2/I3)
     # true  = 缺少身份头直接 401(默认, 安全优先)
@@ -50,6 +53,12 @@ credit-agent:
     price:
       prompt-per-k: '${AI_PRICE_PROMPT_PER_K:1}'
       completion-per-k: '${AI_PRICE_COMPLETION_PER_K:2}'
+      # embedding 单价(元/千 token): 百炼 qwen3.7-text-embedding-flash 官方价 0.000125
+      # 留空则 embedding 调用的 cost 为 NULL(不瞎估)
+      embedding-per-k: '${AI_PRICE_EMBEDDING_PER_K:0.000125}'
+      # 专用重排模型单价(元/千 token): 百炼 qwen3-rerank 官方价 0.5 元/百万 = 0.0005
+      # 只按输入 token 计费, 没有输出
+      rerank-per-k: '${AI_PRICE_RERANK_PER_K:0.0005}'
     # B5 向量化: 独立于 chat 的连接参数, 由 EmbeddingModelConfig 单独构造 Bean
     embedding:
       # 总开关: false 时切片只落库不向量化, 检索退化为纯 BM25
@@ -62,6 +71,31 @@ credit-agent:
       dimensions: ${EMBEDDING_DIMENSIONS:1024}
       # 百炼单批上限 20 行, 超过会被服务端拒绝
       batch-size: ${EMBEDDING_BATCH_SIZE:20}
+  # C 模块检索参数
+  retrieval:
+    # RRF 平滑常数(PRD C3)
+    rrf-k: ${RETRIEVAL_RRF_K:60}
+    # 融合/重排前的候选数: 开重排时会先宽召回这么多条, 再精排出前 limit 条
+    candidate-limit: ${RETRIEVAL_CANDIDATE_LIMIT:20}
+    # C4 重排。是否开启见 enabled; PRD 要求"若 Recall@3 下降则默认关闭并记录数据"。
+    rerank:
+      enabled: ${RERANK_ENABLED:true}
+      # 重排实现: dashscope(专用 rerank 模型) / chat(让 chat 模型输出排列)
+      provider: ${RERANK_PROVIDER:dashscope}
+      # 专用 rerank 模型名; 它只能走 /compatible-api/v1/reranks,
+      # 填到 chat 端点(/v1/chat/completions)会 404 model_not_supported。
+      # provider=chat 时留空则复用 spring.ai.openai.chat.options.model。
+      model: '${RERANK_MODEL:qwen3.7-text-rerank}'
+      # 留空则由 spring.ai.openai.base-url 推导(同 host, /compatible-mode → /compatible-api)
+      base-url: '${RERANK_BASE_URL:}'
+      # 留空则复用 spring.ai.openai.api-key
+      api-key: '${RERANK_API_KEY:}'
+      # 单次最多给多少条打分(PRD C4: 仅对 top20 打分, 不是全量重排)
+      max-candidates: ${RERANK_MAX_CANDIDATES:20}
+      # 单条片段进请求的截断长度, 防止一次重排吃掉几千 token
+      content-limit: ${RERANK_CONTENT_LIMIT:200}
+      # 单次调用超时, 超时即降级为原顺序(不拖死检索)
+      timeout-ms: ${RERANK_TIMEOUT_MS:8000}
 
 # MyBatis-Plus
 mybatis-plus:
@@ -83,12 +117,12 @@ logging:
     level: "%5p [%X{traceId:-}]"
   level:
     com.credit.agent.infra.persistence.mapper: debug
-    # ---- Spring AI 模型请求/响应日志 ----
-    # SimpleLoggerAdvisor 与 DefaultToolCallingManager 内部都只调 logger.debug(...),
-    # root 为 INFO 时加 advisor 也不会输出任何内容。
+    # ---- 模型请求/响应日志(逐轮) ----
+    # 网关自驱动工具循环, 每轮打 LLM_REQ / LLM_RES 两条 debug 日志(带 round 号, 单段截断 2000 字)。
+    # 注意: SimpleLoggerAdvisor 已随 ChatClient 一起移除, 不要再配它的 logger(配了也不会触发)。
     # 默认 info(静默): prompt 里含客户姓名/证件号/流水明细, 属敏感数据, 不默认开。
     # 联调时临时打开: 设环境变量 AI_LOG_LEVEL=debug
-    org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor: '${AI_LOG_LEVEL:debug}'
+    com.credit.agent.agent.llm.SpringAiLlmGateway: '${AI_LOG_LEVEL:debug}'
     org.springframework.ai.model.tool.DefaultToolCallingManager: '${AI_LOG_LEVEL:debug}'
 
 

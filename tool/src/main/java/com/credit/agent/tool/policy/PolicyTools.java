@@ -31,8 +31,13 @@ public class PolicyTools {
 
     private static final Logger log = LoggerFactory.getLogger(PolicyTools.class);
 
-    private static final int DEFAULT_LIMIT = 5;
+    /** 默认召回 3 条: 单条切片 650-800 字, 结果回灌的 token 成本比多调一次模型还高 */
+    private static final int DEFAULT_LIMIT = 3;
+
     private static final int MAX_LIMIT = 10;
+
+    /** 返回给模型的正文上限: 引用只需要章节 + 片段, 整段 800 字会白烧几千 token */
+    private static final int CONTENT_LIMIT = 400;
 
     private final VectorRetriever vectorRetriever;
     private final long timeoutMs;
@@ -97,7 +102,15 @@ public class PolicyTools {
 
     private static PolicyHit toHit(RetrievedChunk chunk) {
         return new PolicyHit(chunk.chunkId(), chunk.docId(), chunk.docName(), chunk.section(),
-                chunk.content(), chunk.pageStart(), chunk.pageEnd(), chunk.score(),
+                truncate(chunk.content()), chunk.pageStart(), chunk.pageEnd(), chunk.score(),
                 Citation.render(chunk.docName(), chunk.pageStart(), chunk.pageEnd()));
+    }
+
+    /** 截断过长正文并显式加省略号, 让模型知道片段被裁过, 避免把半句话当成完整条款引用。 */
+    private static String truncate(String content) {
+        if (content == null || content.length() <= CONTENT_LIMIT) {
+            return content;
+        }
+        return content.substring(0, CONTENT_LIMIT) + "…";
     }
 }
