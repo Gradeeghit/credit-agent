@@ -16,8 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * C5 真实语料基线: 2 份办法共 114 片 + 62 条标注
- * (《个人贷款管理办法》2024年第3号 52 条 + 《固定资产贷款管理办法》2024年第1号 62 条)。
+ * C5 真实语料基线: 3 份办法共 170 片 + 92 条标注
+ * (《个人贷款管理办法》52 条 + 《固定资产贷款管理办法》62 条 + 《流动资金贷款管理办法》51 条及附件 5 段)。
  * 业务含义: 虚构语料只能验证"检索逻辑对不对", 真实条文才能验证"上线是否够用";
  * 本用例离线跑 BM25(不调模型), 阈值是回归护栏。
  */
@@ -25,16 +25,16 @@ class C5RealCorpusTest {
 
     private static final int TOP_K = 3;
 
-    /** 回归护栏: 2 份办法 114 片下实测 0.6935, 留 4 个点余量; 跌破说明分词或语料被改坏。 */
-    private static final double MIN_RECALL = 0.65;
+    /** 回归护栏: 3 份办法 170 片下实测 0.7283, 留 3 个点余量; 跌破说明分词或语料被改坏。 */
+    private static final double MIN_RECALL = 0.70;
 
     @Test
-    @DisplayName("真实语料自检: 2 份办法共 114 片、62 条 query, gold 全部落在语料范围内")
+    @DisplayName("真实语料自检: 3 份办法共 170 片、92 条 query, gold 全部落在语料范围内")
     void datasetIsConsistent() {
         C5Dataset dataset = C5Dataset.loadReal();
 
-        assertEquals(114, dataset.chunks().size());
-        assertEquals(62, dataset.queries().size());
+        assertEquals(170, dataset.chunks().size());
+        assertEquals(92, dataset.queries().size());
         Set<Long> corpusIds = dataset.chunks().stream().map(EvalChunk::chunkId).collect(Collectors.toSet());
         for (EvalQuery query : dataset.queries()) {
             assertTrue(corpusIds.containsAll(query.gold()),
