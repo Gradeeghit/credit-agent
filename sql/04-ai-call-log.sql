@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS ai_call_log (
     latency_ms        BIGINT        NOT NULL DEFAULT 0,
     created_at        TIMESTAMP     NOT NULL DEFAULT now(),
     CONSTRAINT ck_ai_call_tokens CHECK (prompt_tokens >= 0 AND completion_tokens >= 0),
-    CONSTRAINT ck_ai_call_kind CHECK (kind IN ('CHAT', 'EMBEDDING')),
+    CONSTRAINT ck_ai_call_kind CHECK (kind IN ('CHAT', 'EMBEDDING', 'RERANK')),
     CONSTRAINT ck_ai_call_cost CHECK (cost IS NULL OR cost >= 0)
 );
 
@@ -43,4 +43,4 @@ COMMENT ON COLUMN ai_call_log.cost IS '金额由 domain 的 TokenCost 按单价�
 
 ALTER TABLE ai_call_log ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'CHAT';
 ALTER TABLE ai_call_log DROP CONSTRAINT IF EXISTS ck_ai_call_kind;
-ALTER TABLE ai_call_log ADD CONSTRAINT ck_ai_call_kind CHECK (kind IN ('CHAT', 'EMBEDDING'));
+ALTER TABLE ai_call_log ADD CONSTRAINT ck_ai_call_kind CHECK (kind IN ('CHAT', 'EMBEDDING', 'RERANK'));

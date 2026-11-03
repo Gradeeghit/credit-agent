@@ -14,6 +14,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -34,6 +35,7 @@ import java.util.List;
  * </ul>
  */
 @Component
+@ConditionalOnProperty(name = "credit-agent.retrieval.rerank.provider", havingValue = "chat")
 public class LlmReranker implements Reranker {
 
     private static final Logger log = LoggerFactory.getLogger(LlmReranker.class);
@@ -90,7 +92,7 @@ public class LlmReranker implements Reranker {
                     List.of(new UserMessage(buildPrompt(query, pool))), options()));
             long latencyMs = (System.nanoTime() - startNanos) / 1_000_000L;
             String text = textOf(response);
-            recordUsage(response, text, latencyMs);
+            recordUsage(response, latencyMs);
 
             List<Integer> order = RerankOrderParser.parse(text, pool.size());
             if (order == null) {
@@ -139,7 +141,7 @@ public class LlmReranker implements Reranker {
     }
 
     /** 重排也是一次真实计费调用, 必须按 CLAUDE.md 走同一条记账口(走 ai_call_log)。 */
-    private void recordUsage(ChatResponse response, String text, long latencyMs) {
+    private void recordUsage(ChatResponse response, long latencyMs) {
         try {
             long promptTokens = tokensOf(response, true);
             long completionTokens = tokensOf(response, false);

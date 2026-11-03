@@ -27,12 +27,14 @@ public record AiCallRecord(
         Kind kind,
         int roundNo) {
 
-    /** 调用类型: chat 双向计价, embedding 只有输入。 */
+    /** 调用类型: 三类单价互不相同, 混用会算错账。 */
     public enum Kind {
         /** 对话调用 */
         CHAT,
         /** 向量化调用(工具内部触发的检索也要按这个类型记账) */
-        EMBEDDING
+        EMBEDDING,
+        /** 专用重排模型调用: 只有输入 token, 单价通常远低于 chat */
+        RERANK
     }
 
     /** 兼容旧调用: 未声明类型时按 CHAT 处理。 */

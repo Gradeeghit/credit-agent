@@ -30,15 +30,18 @@ public class DbAiCallLogger implements AiCallLogger {
     private final BigDecimal promptPricePerK;
     private final BigDecimal completionPricePerK;
     private final BigDecimal embeddingPricePerK;
+    private final BigDecimal rerankPricePerK;
 
     public DbAiCallLogger(AiCallLogService aiCallLogService,
                           @Value("${credit-agent.ai.price.prompt-per-k:}") String promptPricePerK,
                           @Value("${credit-agent.ai.price.completion-per-k:}") String completionPricePerK,
-                          @Value("${credit-agent.ai.price.embedding-per-k:}") String embeddingPricePerK) {
+                          @Value("${credit-agent.ai.price.embedding-per-k:}") String embeddingPricePerK,
+                          @Value("${credit-agent.ai.price.rerank-per-k:}") String rerankPricePerK) {
         this.aiCallLogService = aiCallLogService;
         this.promptPricePerK = parsePrice(promptPricePerK);
         this.completionPricePerK = parsePrice(completionPricePerK);
         this.embeddingPricePerK = parsePrice(embeddingPricePerK);
+        this.rerankPricePerK = parsePrice(rerankPricePerK);
     }
 
     @Override
@@ -71,6 +74,10 @@ public class DbAiCallLogger implements AiCallLogger {
         if (record.kind() == AiCallRecord.Kind.EMBEDDING) {
             return embeddingPricePerK == null ? null
                     : TokenCost.embeddingCost(record.promptTokens(), embeddingPricePerK);
+        }
+        if (record.kind() == AiCallRecord.Kind.RERANK) {
+            return rerankPricePerK == null ? null
+                    : TokenCost.rerankCost(record.promptTokens(), rerankPricePerK);
         }
         if (promptPricePerK == null || completionPricePerK == null) {
             return null;

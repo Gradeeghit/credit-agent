@@ -55,6 +55,17 @@ class DbAiCallLoggerTest {
     }
 
     @Test
+    @DisplayName("RERANK 用重排单价且忽略输出: 5000 × 0.0005 元每千 = 0.002500")
+    void rerankUsesRerankPrice() {
+        logger("1", "2", "0.000125")
+                .log(new AiCallRecord("t-1", "qwen3-rerank", 5000, 0, 30, AiCallRecord.Kind.RERANK));
+
+        AiCallLog saved = saved();
+        assertEquals("0.002500", saved.getCost().toPlainString());
+        assertEquals("RERANK", saved.getKind());
+    }
+
+    @Test
     @DisplayName("落库失败只告警, 不抛给调用方")
     void saveFailureIsSwallowed() {
         when(service.save(any(AiCallLog.class))).thenThrow(new RuntimeException("db down"));
@@ -65,7 +76,7 @@ class DbAiCallLoggerTest {
     }
 
     private DbAiCallLogger logger(String prompt, String completion, String embedding) {
-        return new DbAiCallLogger(service, prompt, completion, embedding);
+        return new DbAiCallLogger(service, prompt, completion, embedding, "0.0005");
     }
 
     private AiCallLog saved() {

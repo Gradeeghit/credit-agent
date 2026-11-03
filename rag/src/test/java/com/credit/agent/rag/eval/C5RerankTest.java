@@ -1,7 +1,9 @@
 package com.credit.agent.rag.eval;
 
 import com.credit.agent.rag.retrieval.RetrievedChunk;
+import com.credit.agent.rag.retrieval.rerank.DashScopeReranker;
 import com.credit.agent.rag.retrieval.rerank.LlmReranker;
+import com.credit.agent.rag.retrieval.rerank.Reranker;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -35,7 +37,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class C5RerankTest {
 
     private static final int TOP_K = 3;
-    private static final int CANDIDATES = 20;
+    private static final int CANDIDATES = 5;
 
     private static final String DEFAULT_BASE_URL =
             "https://ws-7ave3oec1mw2bccl.cn-beijing.maas.aliyuncs.com/compatible-mode";
@@ -74,11 +76,20 @@ class C5RerankTest {
         Function<String, List<Long>> baseline = query -> candidates.apply(query).stream()
                 .limit(TOP_K).map(RetrievedChunk::chunkId).toList();
 
-        // 用真实的 LlmReranker, 只把底层 ChatModel 换成 HTTP 直连实现(评测无 Spring 容器)
-        LlmReranker reranker = new LlmReranker(new C5ChatModel(chatBaseUrl, chatKey, chatModel),
-                record -> { }, true, "", CANDIDATES, 200);
-        Function<String, List<Long>> reranked = query -> reranker.rerank(query, candidates.apply(query), TOP_K)
-                .stream().map(RetrievedChunk::chunkId).toList();
+        // 用真实的重排实现(评测无 Spring 容器, 这里手工装配)
+        Reranker reranker = buildReranker(chatBaseUrl, chatKey, chatModel);
+        // 统计"重排是否真的改变了 top-k" —— 用来区分"生效但判断与向量一致"与"根本没生效"
+        java.util.concurrent.atomic.AtomicInteger changed = new java.util.concurrent.atomic.AtomicInteger();
+        Function<String, List<Long>> reranked = query -> {
+            List<RetrievedChunk> base = candidates.apply(query);
+            List<Long> afterRerank = reranker.rerank(query, base, TOP_K).stream()
+                    .map(RetrievedChunk::chunkId).toList();
+            List<Long> baselineTopK = base.stream().limit(TOP_K).map(RetrievedChunk::chunkId).toList();
+            if (!afterRerank.equals(baselineTopK)) {
+                changed.incrementAndGet();
+            }
+            return afterRerank;
+        };
 
         EvalReport baselineReport = RecallEvaluator.evaluate("VECTOR", dataset.queries(), baseline, TOP_K);
         EvalReport rerankReport = RecallEvaluator.evaluate("VECTOR+RERANK", dataset.queries(), reranked, TOP_K);
@@ -91,6 +102,9 @@ class C5RerankTest {
                 "提升: %+.4f (%+.2f%%) | MRR: %+.4f", delta,
                 baselineReport.recallAtK() == 0 ? 0.0 : delta * 100 / baselineReport.recallAtK(),
                 rerankReport.mrr() - baselineReport.mrr()));
+        System.out.println(String.format(Locale.ROOT,
+                "重排改变 top3 的 query 数: %d/%d (0 = 没生效或判断与向量完全一致)",
+                changed.get(), dataset.queries().size()));
         rerankReport.missed().forEach(miss -> System.out.println("[C4] MISS " + miss.queryId()
                 + " | " + miss.query() + " | gold=" + miss.gold() + " | top=" + miss.topIds()));
 
@@ -117,6 +131,21 @@ class C5RerankTest {
                             chunk.content(), chunk.page(), chunk.page(), entry.getValue());
                 })
                 .toList();
+    }
+
+    /**
+     * 按 RERANK_PROVIDER 选择实现(默认 dashscope)。
+     * 业务含义: 两条路都要能评 —— dashscope 是生产默认(专用模型, 便宜且不用解析),
+     * chat 是备选(让 chat 模型输出排列), 用同一份语料对比才知道该留哪个。
+     */
+    private static Reranker buildReranker(String baseUrl, String apiKey, String chatModel) {
+        String provider = firstNonBlank(System.getenv("RERANK_PROVIDER"), "dashscope");
+        if ("chat".equalsIgnoreCase(provider)) {
+            return new LlmReranker(new C5ChatModel(baseUrl, apiKey, chatModel), record -> { },
+                    true, "", CANDIDATES, 200);
+        }
+        return new DashScopeReranker(record -> { }, true, baseUrl, baseUrl, apiKey, apiKey,
+                firstNonBlank(System.getenv("RERANK_MODEL"), "qwen3-rerank"), CANDIDATES, 200, 15000);
     }
 
     private static String firstNonBlank(String... values) {

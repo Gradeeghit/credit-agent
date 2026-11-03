@@ -228,3 +228,151 @@ Content-Type: application/json
 
 ### 8) 重新向量化(补偿入口, 幂等: 只处理 embedding IS NULL 的当前切片)
 POST http://localhost:8080/api/documents/1/reindex
+
+### ===============================================================
+### C4 LLM Rerank(默认关闭)
+###
+### 前置 1: 启动时 RERANK_ENABLED=true —— 否则 rerank=true 会静默返回原顺序
+###         (LlmReranker 里 enabled=false 直接短路, 不发起模型调用)
+### 前置 2: chat 模型可用(重排是一次真实的 chat 调用, 不是纯本地计算)
+### 前置 3: 库里已有政策文档且切片已向量化(见第 5 段)
+###
+### 重点: rerank=true 时 score 仍是"召回分"(余弦/RRF), 不再代表重排后的相关性,
+###       所以下面**不断言 score 降序**(第 6 段那条断言在这里不成立),
+###       只校验 条数 / 引用格式 / "只重排不新增"。
+### ===============================================================
+
+### 9.1) 对照组: 不重排, 先宽召回 20 条作为候选池
+###      这一步同时把候选 chunkId 存进全局变量, 供 9.2 断言"不新增"
+POST http://localhost:8080/api/rag/search
+Content-Type: application/json
+
+{
+  "query": "逾期几次算不良",
+  "limit": 20,
+  "docType": "POLICY_DOC",
+  "mode": "VECTOR",
+  "rerank": false
+}
+
+> {%
+  client.test("候选池非空", () => {
+    client.assert(response.body.data.length > 0,
+      "命中 0 条: 先上传政策 PDF 并确认已向量化(第 5 段)");
+  });
+  client.global.set("candidateIds",
+    response.body.data.map(h => h.chunkId).join(","));
+  client.global.set("baselineTop5",
+    response.body.data.slice(0, 5).map(h => h.chunkId).join(","));
+  console.log("候选池: " + client.global.get("candidateIds"));
+  console.log("原顺序 top5: " + client.global.get("baselineTop5"));
+%}
+
+### 9.2) 实验组: VECTOR + rerank, 只取前 5
+###      断言核心是"只重排不新增": 返回的每条都必须在本来的 20 条候选池里,
+###      模型给出越界编号时 RerankOrderParser 会丢弃, 不可能凭空造出新片段
+POST http://localhost:8080/api/rag/search
+Content-Type: application/json
+
+{
+  "query": "逾期几次算不良",
+  "limit": 5,
+  "docType": "POLICY_DOC",
+  "mode": "VECTOR",
+  "rerank": true
+}
+
+> {%
+  client.test("状态码 200(重排失败会降级, 不该 5xx)", () => {
+    client.assert(response.status === 200, "实际: " + response.status);
+  });
+  client.test("返回条数 = 5", () => {
+    client.assert(response.body.data.length === 5,
+      "实际: " + response.body.data.length);
+  });
+  client.test("只重排不新增: 每条都来自候选池", () => {
+    const pool = (client.global.get("candidateIds") || "").split(",").map(Number);
+    response.body.data.forEach((hit, i) => {
+      client.assert(pool.includes(hit.chunkId),
+        "第 " + i + " 条 chunkId=" + hit.chunkId + " 不在候选池, 重排不该引入新片段");
+    });
+  });
+  client.test("仍带引用(重排不影响引用渲染)", () => {
+    response.body.data.forEach((hit, i) => {
+      client.assert(/^\[.+\]$/.test(hit.citation), "第 " + i + " 条: " + hit.citation);
+    });
+  });
+
+  const reranked = response.body.data.map(h => h.chunkId).join(",");
+  console.log("重排后 top5: " + reranked);
+  console.log("与原顺序是否相同: " + (reranked === client.global.get("baselineTop5")));
+%}
+
+### 9.3) HYBRID + rerank(验证重排能接在融合之后, 不绑死某一路)
+POST http://localhost:8080/api/rag/search
+Content-Type: application/json
+
+{
+  "query": "逾期几次算不良",
+  "limit": 5,
+  "docType": "POLICY_DOC",
+  "mode": "HYBRID",
+  "rerank": true
+}
+
+> {%
+  client.test("命中非空", () => {
+    client.assert(response.body.data.length > 0, "命中 0 条");
+  });
+%}
+
+### 9.4) BM25 + rerank(词面路也能重排; 不需要 embedding, 只需 chat)
+POST http://localhost:8080/api/rag/search
+Content-Type: application/json
+
+{
+  "query": "逾期几次算不良",
+  "limit": 5,
+  "docType": "POLICY_DOC",
+  "mode": "BM25",
+  "rerank": true
+}
+
+### ===============================================================
+### 9.5) 怎么确认"重排真的调了模型", 而不是静默降级
+###
+### 方式一(看响应头): 第 9.2 段的响应头里有 X-Trace-Id, 拿它查库:
+###   SELECT id, kind, model, prompt_tokens, completion_tokens, cost, round_no
+###     FROM ai_call_log WHERE trace_id = '<X-Trace-Id>' ORDER BY id;
+###   期望: 比 9.1 多出一次 CHAT 调用, prompt_tokens 约 2000~4000
+###         (20 条候选 × 200 字截断), completion 只有几十(输出是一小段 JSON)
+###
+### 方式二(看应用日志, 需 AI_LOG_LEVEL=debug):
+###   会多出 LLM_REQ round=1 tools=[none], 且 prompt 里含 "重排器" 与 "[1] [2] ..." 编号
+###
+### 方式三(对比): 9.2 与 9.1 的原顺序 top5 完全相同, 有两种可能 ——
+###   ① RERANK_ENABLED=false(没生效, 先查这个);
+###   ② 模型认为原顺序就是最优(正常结果, 不是 bug)。
+###   区分办法就是方式一: 没有多出那次 CHAT 调用 = 没生效。
+### ===============================================================
+
+### 9.6) 边界: limit=1 + rerank, 重排后只保留第 1 条
+###      验证 topN 截断在重排之后生效, 而不是先把候选砍到 1 条再重排(那样重排毫无意义)
+POST http://localhost:8080/api/rag/search
+Content-Type: application/json
+
+{
+  "query": "逾期几次算不良",
+  "limit": 1,
+  "docType": "POLICY_DOC",
+  "mode": "VECTOR",
+  "rerank": true
+}
+
+> {%
+  client.test("只返回 1 条", () => {
+    client.assert(response.status === 200, "实际: " + response.status);
+    client.assert(response.body.data.length === 1,
+      "实际: " + response.body.data.length + ", 库里政策切片可能不足");
+  });
+%}
