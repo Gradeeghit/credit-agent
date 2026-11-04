@@ -1,5 +1,7 @@
 # credit-agent
 
+[![CI](https://github.com/Gradeeghit/credit-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Gradeeghit/credit-agent/actions/workflows/ci.yml)
+
 > 信贷申请的**材料核验 + 制度检索 + 初审报告生成**助手。算钱的部分是确定性代码，AI 只负责"读懂、找依据、讲理由"，最终由人签批。
 
 Java 17 · Spring Boot 3.5 · Spring AI 1.1 · MyBatis-Plus · PostgreSQL 16 + pgvector · 8 个 Maven 模块 · **273 个单测全绿（0 跳过）**
