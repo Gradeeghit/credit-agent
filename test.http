@@ -376,3 +376,114 @@ Content-Type: application/json
       "实际: " + response.body.data.length + ", 库里政策切片可能不足");
   });
 %}
+
+### ===============================================================
+### 10) G4 主管签批(仅 APPROVER)
+###     前置: 先跑一次 analyze, 让申请单进入 REPORT_READY, 并记下报告 version
+###     规则: version 必须等于最新版本(否则 409); REJECT / NEED_MORE_INFO 意见必填;
+###           requiresHumanReview=true 时 APPROVE 的意见 ≥10 字;
+###           同一 (申请单, version, 动作) 重复提交 → idempotent=true 且不新增留痕
+### ===============================================================
+
+### 10.1) 通过
+POST http://localhost:8081/api/applications/1/decision
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: APPROVER
+
+{
+  "action": "APPROVE",
+  "version": 1,
+  "comment": "已核对材料, 同意初审意见"
+}
+
+> {%
+  client.test("首次签批: 200 且 idempotent=false", () => {
+    client.assert(response.status === 200, "实际: " + response.status);
+    client.assert(response.body.data.idempotent === false, "首次签批不应标记为幂等");
+    client.assert(response.body.data.status === "APPROVED", "实际状态: " + response.body.data.status);
+  });
+%}
+
+### 10.2) 同一动作重复提交 → 返回首次结果, idempotent=true(不产生第二条 approval_step)
+###       注意: 第一次已把状态改成 APPROVED, 这里再发同一动作应命中幂等分支而不是 409
+POST http://localhost:8081/api/applications/1/decision
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: APPROVER
+
+{
+  "action": "APPROVE",
+  "version": 1,
+  "comment": ""
+}
+
+> {%
+  client.test("重复签批: idempotent=true", () => {
+    client.assert(response.status === 200, "实际: " + response.status);
+    client.assert(response.body.data.idempotent === true, "重复请求应命中幂等");
+  });
+%}
+
+### 10.3) 已通过的单子改判驳回 → 409(终态不可逆); 换成一张 REPORT_READY 的单子则成功
+POST http://localhost:8081/api/applications/1/decision
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: APPROVER
+
+{
+  "action": "REJECT",
+  "version": 1,
+  "comment": "重新审阅后认为收入不足"
+}
+
+> {%
+  client.test("终态不可逆: 409", () => {
+    client.assert(response.status === 409, "实际: " + response.status);
+    client.assert(response.body.code === "APPLICATION_STATUS_INVALID", "实际 code: " + response.body.code);
+  });
+%}
+
+### 10.4) 版本不匹配 → 409
+POST http://localhost:8081/api/applications/1/decision
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: APPROVER
+
+{
+  "action": "APPROVE",
+  "version": 99,
+  "comment": "看的是旧版本"
+}
+
+> {%
+  client.test("版本不匹配: 409 REPORT_VERSION_MISMATCH", () => {
+    client.assert(response.status === 409, "实际: " + response.status);
+    client.assert(response.body.code === "REPORT_VERSION_MISMATCH", "实际 code: " + response.body.code);
+  });
+%}
+
+### 10.5) 信审员签批 → 403
+POST http://localhost:8081/api/applications/1/decision
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: CHECKER
+
+{
+  "action": "APPROVE",
+  "version": 1,
+  "comment": "信审员没这个权限"
+}
+
+> {%
+  client.test("越权: 403", () => {
+    client.assert(response.status === 403, "实际: " + response.status);
+  });
+%}
+
+### 10.6) 签批留痕自查(需先执行 sql/07-audit-log.sql)
+###   SELECT operator_role, action, before_json, after_json, detail, created_at
+###     FROM audit_log WHERE target_type = 'APPLICATION' AND target_id = 1
+###    ORDER BY id DESC LIMIT 5;
+###   期望: 10.1 只有 1 条; 10.2 的重复请求不新增记录; 10.3/10.4/10.5 均无记录(未成功)
+### ===============================================================
