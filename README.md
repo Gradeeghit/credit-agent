@@ -2,7 +2,7 @@
 
 > 信贷申请的**材料核验 + 制度检索 + 初审报告生成**助手。算钱的部分是确定性代码，AI 只负责"读懂、找依据、讲理由"，最终由人签批。
 
-Java 17 · Spring Boot 3.5 · Spring AI 1.1 · MyBatis-Plus · PostgreSQL 16 + pgvector · 8 个 Maven 模块 · **255 个单测全绿（0 跳过）**
+Java 17 · Spring Boot 3.5 · Spring AI 1.1 · MyBatis-Plus · PostgreSQL 16 + pgvector · 8 个 Maven 模块 · **273 个单测全绿（0 跳过）**
 
 ---
 
@@ -20,7 +20,7 @@ Java 17 · Spring Boot 3.5 · Spring AI 1.1 · MyBatis-Plus · PostgreSQL 16 + p
 
 ## 二、快速启动（约 5 分钟）
 
-**前置**：JDK 17、Docker；Maven 用仓库自带的 `mvnw`（Windows 用 `mvnw.cmd`）。
+**前置**：JDK 17、Docker、Maven 3.9.x；也可以用仓库自带的 `mvnw`（Windows 用 `mvnw.cmd`，它会下载自己的 Maven 版本）。
 
 ### 1. 起数据库
 
@@ -28,7 +28,7 @@ Java 17 · Spring Boot 3.5 · Spring AI 1.1 · MyBatis-Plus · PostgreSQL 16 + p
 docker compose up -d
 ```
 
-`docker-compose.yml` 把 `./sql` 挂到 `/docker-entrypoint-initdb.d`，**首次启动会按文件名顺序自动执行** `03`（9 张业务表 + 产品种子）→ `04`（`ai_call_log`）→ `05`（演示数据）→ `06`（`ai_call_log.round_no`）。
+`docker-compose.yml` 把 `./sql` 挂到 `/docker-entrypoint-initdb.d`，**首次启动会按文件名顺序自动执行** `03`（9 张业务表 + 产品种子）→ `04`（`ai_call_log`）→ `05`（演示数据）→ `06`（`ai_call_log.round_no`）→ `07`（`audit_log`，签批审计）。
 
 > 卷已存在时 initdb 不会重跑，需手动执行：
 >
@@ -69,7 +69,8 @@ Windows PowerShell 用 `$env:DB_URL="..."`，一次性设置；要持久化用 `
 
 ```bash
 # 上传一份制度 PDF（必须是文本层，扫描件会 parse_status=UNSUPPORTED）
-curl -F "file=@docs/samples/个人贷款管理办法.pdf" http://localhost:8081/api/documents/policy
+# 自备一份法规/制度 PDF；若你本地有 docs/samples/，可直接用其中的法规原文
+curl -F "file=@个人贷款管理办法.pdf" http://localhost:8081/api/documents/policy
 
 # 触发一次初审分析（身份目前由请求头直传，见「已知限制」）
 curl -X POST http://localhost:8081/api/applications/1/analyze \
@@ -139,21 +140,22 @@ curl -X POST http://localhost:8081/api/applications/1/analyze \
 
 ## 五、几个关键取舍
 
-| 取舍 | 原因 | 详述 |
+| 取舍 | 原因 | 代码位置 |
 |---|---|---|
-| **金额不用 AI** | 概率模型同一输入可能给不同数字，且无法复算；金额必须确定、可审计、可单测 | `docs/面试相关.md` §3.1 |
-| **分域 Agent + 构造期隔离** | 幻觉的根因是"看到了不该看的证据"，靠 prompt 约束不够，`DomainBrief` 用私有构造按域生成 | §3.2 |
-| **砍掉混合检索、保留重排** | 两轮评测都显示融合低于纯向量；重排在真实语料上 +8.54% | §3.3 |
-| **工具循环自驱动 + 逐轮记账** | 框架默认一次 `call()` 跑完 N 轮、只返回最后一轮 token，成本系统性低估 | §3.7 |
-| **不用 `ChatClient` 的 Advisor/结构化输出** | 不用 chat memory（隔离靠构造期）、流水域是"正文 + 尾附 JSON"混合输出 | `docs/任务进度.md` |
+| **金额不用 AI** | 概率模型同一输入可能给不同数字，且无法复算；金额必须确定、可审计、可单测 | `domain/loan/`（额度 / 等额本息 / 手续费 / 超限判定，零依赖） |
+| **分域 Agent + 构造期隔离** | 幻觉的根因是"看到了不该看的证据"，靠 prompt 约束不够，`DomainBrief` 用私有构造按域生成 | `agent/domain/DomainBrief` |
+| **砍掉混合检索、保留重排** | 两轮评测都显示融合低于纯向量；重排在真实语料上 +8.54% | `docs/检索评测说明.md`、`rag/retrieval/` |
+| **工具循环自驱动 + 逐轮记账** | 框架默认一次 `call()` 跑完 N 轮、只返回最后一轮 token，成本系统性低估 | `agent/llm/SpringAiLlmGateway` |
+| **不用 `ChatClient` 的 Advisor/结构化输出** | 不用 chat memory（隔离靠构造期）、流水域是"正文 + 尾附 JSON"混合输出 | 同上；取舍见对应类的 Javadoc |
 
 ---
 
 ## 六、已知限制
 
 - **身份是请求头直传**（`X-User-Id` / `X-User-Role`），未接 Spring Security，可伪造；仅开发态可用。
-- **签批闭环未完成**：报告能生成、版本化、锁定，但还不能签批到 `APPROVED/REJECTED` 终态。
-- **`audit_log`、`blacklist` 两张表未建**，对应的字段级脱敏与黑名单闸门未做。
+- **签批只支持单笔**：G4 已闭环（通过 / 驳回 / 要求补材料、版本 409、幂等、乐观锁），但无批量签批，也不能对需人工复核的报告"一键通过"（强制写 ≥10 字意见）。
+- **审计只覆盖签批一类**：`audit_log` 建表脚本已备（`sql/07`）；报告查看、越权尝试两类留痕未接。
+- **字段级权限（H5）与黑名单闸门（H7）未做**：`blacklist` 表未建，敏感词清单未定。
 - **重排只接在检索接口上**（`/api/rag/search` 的 `mode`/`rerank` 参数），制度域主链（`PolicyTools` → `VectorRetriever`）仍走纯向量。
 - 评测语料偏小（65 / 92 条），且真实语料是**按条切分**，与线上"按章节 + 800 字滑窗"不一致。
 - 无性能压测、无 SLA 数据；无 Testcontainers，数据库约束类断言靠手工验证。
@@ -164,4 +166,4 @@ curl -X POST http://localhost:8081/api/applications/1/analyze \
 
 [Apache License 2.0](LICENSE) © 2026 credit-agent contributors
 
-第三方依赖各自遵循其原始许可（Spring、MyBatis-Plus、PDFBox、jieba 等）。仓库内 `docs/samples/` 下的监管文件为公开法规原文，仅供检索演示，不随本许可授权。
+第三方依赖各自遵循其原始许可（Spring、MyBatis-Plus、PDFBox、jieba 等）。若仓库包含 `docs/samples/` 目录，其中的监管文件为公开法规原文，仅供检索演示，不随本许可授权。
