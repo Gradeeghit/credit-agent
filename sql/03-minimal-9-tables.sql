@@ -174,8 +174,10 @@ CREATE TABLE document_chunk (
 
 -- 检索过滤: 只召回当前有效材料的切片
 CREATE INDEX idx_chunk_doc_current ON document_chunk (doc_id, is_current);
--- 向量召回; 数据量小时也可退化为全表精确扫描
-CREATE INDEX idx_chunk_embedding ON document_chunk USING hnsw (embedding vector_cosine_ops);
+-- 向量召回; PRD §9.3 要求部分索引(WHERE is_current), 与检索 SQL 的过滤条件对齐:
+-- 索引里不塞已作废切片, 且查询带 is_current = true 时才能命中该索引
+CREATE INDEX idx_chunk_embedding ON document_chunk
+       USING hnsw (embedding vector_cosine_ops) WHERE is_current;
 
 COMMENT ON TABLE  document_chunk IS '文档切片; embedding 列在 B5 解锁前保持 NULL, 不影响建表';
 COMMENT ON COLUMN document_chunk.page_start IS '起始页码; 跨页时 page_end != page_start, 引用渲染为 p.12-13';

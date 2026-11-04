@@ -119,7 +119,7 @@ Authorization: Bearer {{apiKey}}
 ### ===============================================================
 
 ### 5.1 上传政策文档(返回 chunkCount; embedding 为空说明向量化失败, 见应用日志)
-POST http://localhost:8080/api/documents/policy
+POST http://localhost:8081/api/documents/policy
 Content-Type: multipart/form-data; boundary=WebAppBoundary
 
 --WebAppBoundary
@@ -142,7 +142,7 @@ Content-Type: application/pdf
 ### ===============================================================
 
 ### 6) 全库检索: 命中项自带 [文档名 p.12-13] 引用
-POST http://localhost:8080/api/rag/search
+POST http://localhost:8081/api/rag/search
 Content-Type: application/json
 
 {
@@ -169,7 +169,7 @@ Content-Type: application/json
 %}
 
 ### 7) 限定单份文档检索(docId 必填时才加 doc_id 过滤)
-POST http://localhost:8080/api/rag/search
+POST http://localhost:8081/api/rag/search
 Content-Type: application/json
 
 {
@@ -182,7 +182,7 @@ Content-Type: application/json
 ### 注意: HYBRID 返回的 score 是 RRF 融合分(约 0.0x), 与余弦相似度不可比, 只看顺序
 
 ### 7.1.1) 纯向量(语义相近)
-POST http://localhost:8080/api/rag/search
+POST http://localhost:8081/api/rag/search
 Content-Type: application/json
 
 {
@@ -193,7 +193,7 @@ Content-Type: application/json
 }
 
 ### 7.1.2) 纯词面(BM25, 不需要 embedding Key)
-POST http://localhost:8080/api/rag/search
+POST http://localhost:8081/api/rag/search
 Content-Type: application/json
 
 {
@@ -204,7 +204,7 @@ Content-Type: application/json
 }
 
 ### 7.1.3) 融合(默认; 不传 mode 也是这个行为)
-POST http://localhost:8080/api/rag/search
+POST http://localhost:8081/api/rag/search
 Content-Type: application/json
 
 {
@@ -227,7 +227,7 @@ Content-Type: application/json
 %}
 
 ### 8) 重新向量化(补偿入口, 幂等: 只处理 embedding IS NULL 的当前切片)
-POST http://localhost:8080/api/documents/1/reindex
+POST http://localhost:8081/api/documents/1/reindex
 
 ### ===============================================================
 ### C4 LLM Rerank(默认关闭)
@@ -244,7 +244,7 @@ POST http://localhost:8080/api/documents/1/reindex
 
 ### 9.1) 对照组: 不重排, 先宽召回 20 条作为候选池
 ###      这一步同时把候选 chunkId 存进全局变量, 供 9.2 断言"不新增"
-POST http://localhost:8080/api/rag/search
+POST http://localhost:8081/api/rag/search
 Content-Type: application/json
 
 {
@@ -271,7 +271,7 @@ Content-Type: application/json
 ### 9.2) 实验组: VECTOR + rerank, 只取前 5
 ###      断言核心是"只重排不新增": 返回的每条都必须在本来的 20 条候选池里,
 ###      模型给出越界编号时 RerankOrderParser 会丢弃, 不可能凭空造出新片段
-POST http://localhost:8080/api/rag/search
+POST http://localhost:8081/api/rag/search
 Content-Type: application/json
 
 {
@@ -309,7 +309,7 @@ Content-Type: application/json
 %}
 
 ### 9.3) HYBRID + rerank(验证重排能接在融合之后, 不绑死某一路)
-POST http://localhost:8080/api/rag/search
+POST http://localhost:8081/api/rag/search
 Content-Type: application/json
 
 {
@@ -327,7 +327,7 @@ Content-Type: application/json
 %}
 
 ### 9.4) BM25 + rerank(词面路也能重排; 不需要 embedding, 只需 chat)
-POST http://localhost:8080/api/rag/search
+POST http://localhost:8081/api/rag/search
 Content-Type: application/json
 
 {
@@ -358,7 +358,7 @@ Content-Type: application/json
 
 ### 9.6) 边界: limit=1 + rerank, 重排后只保留第 1 条
 ###      验证 topN 截断在重排之后生效, 而不是先把候选砍到 1 条再重排(那样重排毫无意义)
-POST http://localhost:8080/api/rag/search
+POST http://localhost:8081/api/rag/search
 Content-Type: application/json
 
 {

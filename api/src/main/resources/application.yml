@@ -30,6 +30,7 @@ spring:
       max-request-size: 24MB
 
 server:
+  # 端口以这里为准(8081); test.http 已同步为 8081, 文档里出现的 8080 属过期写法
   port: 8081
 
 # 上传落盘目录(政策文档/材料 PDF)
@@ -37,7 +38,8 @@ credit-agent:
   upload-dir: '${UPLOAD_DIR:uploads}'
   agent:
     # 制度域强制先取证: 下发 tool_choice=required(该域只挂 searchPolicy, 等价于必须先调它)。
-    # 端点不支持 tool_choice 时置 false, 整体退回"模型自主决定是否调工具"。
+    # 当前默认 false: required 在 maas 网关上"每轮是否持续生效"的副作用未实测(风险 34),
+    # 需要强制取证时设 FORCE_TOOL_ENABLED=true; 端点不支持 tool_choice 时保持 false。
     force-tool-enabled: ${FORCE_TOOL_ENABLED:false}
     # 一次 ask 内最多几轮模型调用(含最终作答轮), 防止工具循环失控。
     # 每轮都是供应商侧一次独立计费, 都会单独落一条 ai_call_log(round_no 递增)。
@@ -63,7 +65,10 @@ credit-agent:
     embedding:
       # 总开关: false 时切片只落库不向量化, 检索退化为纯 BM25
       enabled: ${EMBEDDING_ENABLED:true}
-      api-key: '${OPENAI_API_KEY:sk-yyy}'
+      # Key 优先级: EMBEDDING_API_KEY > OPENAI_API_KEY > 占位符。
+      # 当前 maas 网关 chat/embedding 同 Key, 所以复用 OPENAI_API_KEY;
+      # 换回百炼官方端点(dashscope.aliyuncs.com)时把 EMBEDDING_API_KEY 设成独立 Key 即可, 无需改代码。
+      api-key: '${EMBEDDING_API_KEY:${OPENAI_API_KEY:sk-yyy}}'
       # 同样不能带 /v1; 带上了 EmbeddingModelConfig 会自动剥掉并打警告
       base-url: '${EMBEDDING_BASE_URL:https://ws-7ave3oec1mw2bccl.cn-beijing.maas.aliyuncs.com/compatible-mode}'
       model: '${EMBEDDING_MODEL:qwen3.7-text-embedding-flash}'
@@ -78,6 +83,9 @@ credit-agent:
     # 融合/重排前的候选数: 开重排时会先宽召回这么多条, 再精排出前 limit 条
     candidate-limit: ${RETRIEVAL_CANDIDATE_LIMIT:20}
     # C4 重排。是否开启见 enabled; PRD 要求"若 Recall@3 下降则默认关闭并记录数据"。
+    # 注意: 这里的 enabled 只是"允许重排"的总闸, 真正是否重排由调用方传 rerank=true 决定。
+    #       当前主链路的制度域前置检索走 VectorRetriever, 没有接 HybridRetriever, 因此不受本开关影响;
+    #       本开关目前只对 POST /api/rag/search(带 rerank=true) 生效(风险 43)。
     rerank:
       enabled: ${RERANK_ENABLED:true}
       # 重排实现: dashscope(专用 rerank 模型) / chat(让 chat 模型输出排列)
@@ -122,8 +130,8 @@ logging:
     # 注意: SimpleLoggerAdvisor 已随 ChatClient 一起移除, 不要再配它的 logger(配了也不会触发)。
     # 默认 info(静默): prompt 里含客户姓名/证件号/流水明细, 属敏感数据, 不默认开。
     # 联调时临时打开: 设环境变量 AI_LOG_LEVEL=debug
-    com.credit.agent.agent.llm.SpringAiLlmGateway: '${AI_LOG_LEVEL:debug}'
-    org.springframework.ai.model.tool.DefaultToolCallingManager: '${AI_LOG_LEVEL:debug}'
+    com.credit.agent.agent.llm.SpringAiLlmGateway: '${AI_LOG_LEVEL:info}'
+    org.springframework.ai.model.tool.DefaultToolCallingManager: '${AI_LOG_LEVEL:info}'
 
 
 

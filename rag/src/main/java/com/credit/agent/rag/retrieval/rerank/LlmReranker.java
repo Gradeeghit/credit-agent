@@ -48,7 +48,8 @@ public class LlmReranker implements Reranker {
     private final int contentLimit;
 
     /**
-     * @param enabled       总开关, 默认 false(尚未在评测集上验证提升效果)
+     * @param enabled       总开关, 取值以 application.yml 为准(当前默认为 true);
+     *                      这里是缺省兜底值 false, 只有配置项整个缺失时才会生效
      * @param model         重排用的模型, 留空则复用 chat 默认模型
      * @param maxCandidates 一次最多给多少条打分(PRD C4: 仅对 top20 打分)
      * @param contentLimit  单条片段进 prompt 的截断长度, 防止一次重排吃掉几千 token

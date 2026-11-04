@@ -60,7 +60,8 @@ public class DashScopeReranker implements Reranker {
     private final long timeoutMs;
 
     /**
-     * @param enabled       总开关, 默认 false(未在评测集上确认收益前不默认开启)
+     * @param enabled       总开关, 取值以 application.yml 为准(当前默认为 true);
+     *                      这里是缺省兜底值 false, 只有配置项整个缺失时才会生效
      * @param baseUrl       重排端点基址; 留空则由 chat 的 base-url 推导(host 相同, 路径换成 compatible-api)
      * @param apiKey        重排 Key; 留空则复用 chat 的 Key
      * @param model         重排模型, 默认 qwen3-rerank(专用 rerank 模型, 不能填 chat 模型名)
