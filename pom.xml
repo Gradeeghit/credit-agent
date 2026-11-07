@@ -38,6 +38,8 @@
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
         <pdfbox.version>3.0.4</pdfbox.version>
         <jieba.version>1.0.2</jieba.version>
+        <!-- 覆盖率: 只用 JaCoCo, 不引入 checkstyle/pmd/spotbugs -->
+        <jacoco.version>0.8.12</jacoco.version>
     </properties>
 
     <dependencyManagement>
@@ -131,6 +133,29 @@
                     <!-- 用属性包一层: 需要跑 live 用例时传 -Dsurefire.excludedGroups=<不存在的tag> 即可放行 -->
                     <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                 </configuration>
+            </plugin>
+
+            <!-- 覆盖率: prepare-agent 默认绑定 initialize, 必须早于 surefire 挂上 agent
+                 (否则 report 会报 "missing execution data file"); report 绑定 test 阶段 -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
